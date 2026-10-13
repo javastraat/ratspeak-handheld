@@ -1,15 +1,10 @@
 #include "SettingsScreen.h"
-#include "ui/VoiceSettingsText.h"
 void SettingsScreen::buildVoiceMenu() {
     clearRows();if(!_config) return;const auto& s=settingsView().voice;
     char volume[32];snprintf(volume,sizeof volume,"Playback volume: %u%%",s.volume);
     addRow(volume, RowAction::Voice, 0);
     char limit[32];snprintf(limit,sizeof limit,"Max voice messages: %u",s.maxMessages);addRow(limit, RowAction::Voice, 1);
-    addRow(handheld::ui::voice_settings::InternalLimit);
-    addRow(handheld::ui::voice_settings::Expiry);
-    addRow(std::string("SD card: ")+handheld::ui::voice_settings::SdLimit);
-    addRow("Clips: up to 15 seconds");
-    addRow("Live calls: unavailable");addRow("< Back", RowAction::Back);
+    addRow("< Back", RowAction::Back);
 }
 void SettingsScreen::activateVoiceRow(int row) {
     if(!_config || _config->settingsPending() || _radioApplyPending) return;

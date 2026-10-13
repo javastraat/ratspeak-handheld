@@ -7,6 +7,7 @@
 #include "radio/RadioPresets.h"
 #include "radio/RadioSettings.h"
 #include "util/DisplayText.h"
+#include "ui/VoiceSettingsText.h"
 #include <algorithm>
 #include <new>
 #include <WiFi.h>
@@ -916,6 +917,10 @@ void SettingsScreen::render(M5Canvas& canvas) {
         // Hint
         canvas.setTextColor(Theme::MUTED);
         canvas.drawString("Enter=save", 4, y0 + headerH + 36);
+        if (_subMenu == MENU_VOICE && _editField == 1) {
+            canvas.drawString(handheld::ui::voice_settings::StorageScope, 4, y0 + headerH + 50);
+            canvas.drawString(handheld::ui::voice_settings::Expiry, 4, y0 + headerH + 62);
+        }
     } else {
         _list.render(canvas, 0, y0 + headerH + 2, Theme::CONTENT_W,
                      Theme::CONTENT_H - headerH - 3, true,
@@ -952,7 +957,6 @@ void SettingsScreen::buildDeviceMenu() {
     addRow("rsCardputer v" RSCARDPUTER_VERSION_STRING);
     addRow("M5Stack Cardputer Adv");
     addRow("Cap LoRa-1262 (SX1262)");
-    addRow("ratspeak.org");
     char value[32];
     snprintf(value, sizeof value, "Heap: %lu bytes", (unsigned long)ESP.getFreeHeap());
     addRow(value, RowAction::Heap);
