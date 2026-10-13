@@ -9,6 +9,8 @@
 using namespace handheld::propagation;
 
 void LvSettingsScreen::onExit() {
+    _viewActive = false;
+    ++_fwViewGeneration;
     ++_propGeneration; _propChoicePending = false;
 }
 
@@ -17,31 +19,32 @@ void LvSettingsScreen::buildPropagationItems(int& idx) {
     const int start = idx; _propCategory = int(_categories.size());
     _items.push_back({"Propagation", SettingType::TOGGLE,
         [&settings] { return settings.enabled ? 1 : 0; }, [&settings](int v) { settings.enabled = v != 0; },
-        [](int v) { return String(v ? "ON" : "OFF"); }}); ++idx;
+        [](int v) { return String(v ? "ON" : "OFF"); }}); _items.back().id = SettingId::PropagationEnabled; ++idx;
     _items.push_back({"Node mode", SettingType::ENUM_CHOICE,
         [&settings] { return int(settings.selection); }, [this, &settings](int v) {
             settings.selection = Selection(v); _propChoicePending = v == int(Selection::Manual);
-        }, nullptr, 0, 1, 1, {"AUTO", "MANUAL"}}); ++idx;
+        }, nullptr, 0, 1, 1, {"AUTO", "MANUAL"}}); _items.back().id = SettingId::PropagationMode; ++idx;
     _items.push_back({"Delivery", SettingType::ENUM_CHOICE,
         [&settings] { return int(settings.delivery); }, [&settings](int v) { settings.delivery = Delivery(v); },
-        nullptr, 0, 1, 1, {"AUTO: direct first", "ALWAYS: relay only"}}); ++idx;
+        nullptr, 0, 1, 1, {"AUTO: direct first", "ALWAYS: relay only"}}); _items.back().id = SettingId::PropagationDelivery; ++idx;
     _items.push_back({"Manual node", SettingType::READONLY, nullptr, nullptr, [&settings](int) {
         char hash[33]; settings.manualHex(hash); return settings.hasManual ? String(hash) : String("Not set");
-    }}); ++idx;
-    auto action = [&](const char* label, std::function<void()> run) {
-        SettingItem item; item.label = label; item.type = SettingType::ACTION;
+    }}); _items.back().id = SettingId::PropagationManualNode; ++idx;
+    auto action = [&](SettingId id, const char* label, std::function<void()> run) {
+        SettingItem item; item.id = id; item.label = label; item.type = SettingType::ACTION;
         item.formatter = [](int) { return String("[Enter]"); }; item.action = std::move(run);
         _items.push_back(std::move(item)); ++idx;
     };
-    action("Choose / replace node", [this] { showPropagationDialog(SettingsView::PROPAGATION_CHOICE); });
-    action("Clear manual node", [this, &settings] { settings.setManual(nullptr, 0); applyAndSave(); });
+    action(SettingId::PropagationChooseNode, "Choose / replace node", [this] { showPropagationDialog(SettingsView::PROPAGATION_CHOICE); });
+    action(SettingId::PropagationClearNode, "Clear manual node", [this, &settings] { settings.setManual(nullptr, 0); applyAndSave(); });
     _items.push_back({"Inbox", SettingType::READONLY, nullptr, nullptr, [this](int) {
         return String(syncLabel(_service ? _service->status().propagation.status : SyncStatus::Off));
-    }}); ++idx;
-    action("Sync now", [this] { if (_service) _service->action(handheld::Operation::PropagationSync); });
+    }}); _items.back().id = SettingId::PropagationInbox; ++idx;
+    action(SettingId::PropagationSync, "Sync now", [this] { if (_service) _service->action(handheld::Operation::PropagationSync); });
     _categories.push_back({"Propagation", start, idx - start, [&settings] {
         return settings.enabled ? String(settings.delivery == Delivery::Always ? "ON / ALWAYS" : "ON / AUTO") : String("OFF");
     }});
+    _categories.back().id = SettingsCategoryId::Propagation;
 }
 
 void LvSettingsScreen::pollPropagationUI() {

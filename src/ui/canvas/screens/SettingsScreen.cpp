@@ -102,117 +102,197 @@ void SettingsScreen::onEnter() {
     _candidateReady = _config && _candidate.tryAssign(*_config);
     if (_candidateReady) _candidateDirty = false;
     _subMenu = MENU_MAIN;
+    _active = true;
+    _scanVisible = false;
+    _confirmPending = false;
     _editing = false;
     _editField = -1;
+    _editInput.setActive(false);
+    _editInput.setSubmitCallback(nullptr);
+    _tcpPendingHost.clear();
+    _editLabel.clear();
+    for (auto& row : _focus) row = {};
     _propChoicePending = false; _propCount = 0;
     buildMainMenu();
 }
 
+void SettingsScreen::onExit() {
+    _active = false;
+    _scanVisible = false; // The owner still retires a scan already in progress.
+    _confirmPending = _editing = _propChoicePending = false;
+    _editField = -1;
+    _editInput.setActive(false);
+    _editInput.setSubmitCallback(nullptr);
+    _tcpPendingHost.clear();
+    _editLabel.clear();
+    _propCount = 0;
+}
+
+void SettingsScreen::clearRows() { _list.clear(); _rowCount = 0; }
+
+void SettingsScreen::addRow(const std::string& label, RowAction action, uint8_t value, uint16_t color) {
+    if (_rowCount >= RowCapacity) return;
+    _list.addItem(label, color);
+    _rows[_rowCount++] = {action, value};
+}
+
+SettingsScreen::Row SettingsScreen::selectedRow() const {
+    const int selected = _list.getSelectedIndex();
+    return selected >= 0 && size_t(selected) < _rowCount ? _rows[selected] : Row{};
+}
+
+void SettingsScreen::restoreRow(Row row) {
+    for (size_t i = 0; i < _rowCount; ++i) {
+        if (_rows[i].action == row.action && _rows[i].value == row.value) {
+            _list.setSelected(int(i)); return;
+        }
+    }
+}
+
+void SettingsScreen::rebuildMenu() {
+    switch (_subMenu) {
+        case MENU_MAIN: buildMainMenu(); break;
+        case MENU_RADIO: buildRadioMenu(); break;
+        case MENU_RADIO_PRESETS: buildRadioPresetsMenu(); break;
+        case MENU_WIFI: buildWiFiMenu(); break;
+        case MENU_TCP: buildTCPMenu(); break;
+        case MENU_SDCARD: buildSDCardMenu(); break;
+        case MENU_DISPLAY: buildDisplayMenu(); break;
+        case MENU_IDENTITY: buildIdentityMenu(); break;
+        case MENU_AUDIO: buildAudioMenu(); break;
+        case MENU_ABOUT: buildDeviceMenu(); break;
+        case MENU_VOICE: buildVoiceMenu(); break;
+        case MENU_PROPAGATION: buildPropagationMenu(); break;
+        case MENU_PROPAGATION_CHOICE: showPropagationChoice(); break;
+        case MENU_PROPAGATION_NODES: showPropagationNodes(); break;
+        case MENU_WIFI_SCAN: buildScanResultsMenu(); break;
+        case MENU_COUNT: break;
+    }
+}
+
+void SettingsScreen::enterMenu(SubMenu menu) {
+    _focus[_subMenu] = selectedRow();
+    _subMenu = menu;
+    rebuildMenu();
+}
+
+void SettingsScreen::backMenu() {
+    const SubMenu child = _subMenu;
+    _propChoicePending = false;
+    if (child == MENU_WIFI_SCAN) _scanVisible = false;
+    _subMenu = child == MENU_RADIO_PRESETS ? MENU_RADIO :
+        child == MENU_TCP || child == MENU_WIFI_SCAN ? MENU_WIFI :
+        child == MENU_PROPAGATION_NODES ? MENU_PROPAGATION_CHOICE :
+        child == MENU_PROPAGATION_CHOICE ? MENU_PROPAGATION : MENU_MAIN;
+    rebuildMenu();
+    restoreRow(_focus[_subMenu]);
+}
+
 void SettingsScreen::buildMainMenu() {
-    _list.clear();
-    _list.addItem("Radio");
-    _list.addItem("Wi-Fi");
-    _list.addItem("SD Card");
-    _list.addItem("Display");
-    _list.addItem("Audio");
-    _list.addItem("About");
-    _list.addItem("Factory Reset", Theme::ERROR);
-    _list.addItem("Propagation");
-    _list.addItem("Voice");
+    clearRows();
+    addRow("LoRa", RowAction::OpenMenu, MENU_RADIO);
+    addRow("Wi-Fi & TCP", RowAction::OpenMenu, MENU_WIFI);
+    addRow("Propagation", RowAction::OpenMenu, MENU_PROPAGATION);
+    addRow("Voice Messages", RowAction::OpenMenu, MENU_VOICE);
+    addRow("Identity", RowAction::OpenMenu, MENU_IDENTITY);
+    addRow("Display", RowAction::OpenMenu, MENU_DISPLAY);
+    addRow("Alerts", RowAction::OpenMenu, MENU_AUDIO);
+    addRow("SD Card", RowAction::OpenMenu, MENU_SDCARD);
+    addRow("Device", RowAction::OpenMenu, MENU_ABOUT);
 }
 
 void SettingsScreen::buildRadioMenu() {
-    _list.clear();
+    clearRows();
     if (!_config) return;
     auto& s = _candidate.settings();
     char buf[40];
 
     // Active preset indicator
     snprintf(buf, sizeof(buf), "%s: %s", (_radioApplyPending || _config->settingsPending()) ? "Pending" : _candidateDirty ? "Unsaved" : "Saved", RadioPresets::name(s));
-    _list.addItem(buf);
+    addRow(buf);
+    addRow("Link Presets", RowAction::OpenMenu, MENU_RADIO_PRESETS);
 
-    // Presets (items 1..RadioPresets::count)
-    int activeIdx = RadioPresets::detect(s);
-    for (int i = 0; i < RadioPresets::count; i++) {
+    snprintf(buf, sizeof(buf), "Frequency: %lu Hz", (unsigned long)s.loraFrequency);
+    addRow(buf, RowAction::Edit, 0);
+    snprintf(buf, sizeof(buf), "TX Power: %d dBm", s.loraTxPower);
+    addRow(buf, RowAction::Edit, 4);
+    snprintf(buf, sizeof(buf), "SF: %d", s.loraSF);
+    addRow(buf, RowAction::Edit, 1);
+    snprintf(buf, sizeof(buf), "BW: %lu Hz", (unsigned long)s.loraBW);
+    addRow(buf, RowAction::Edit, 2);
+    snprintf(buf, sizeof(buf), "CR: %d", s.loraCR);
+    addRow(buf, RowAction::Edit, 3);
+    snprintf(buf, sizeof(buf), "Preamble: %ld symbols", s.loraPreamble);
+    addRow(buf, RowAction::Edit, 5);
+
+    addRow("< Back", RowAction::Back);
+}
+
+void SettingsScreen::buildRadioPresetsMenu() {
+    clearRows();
+    if (!_config) return;
+    const int activeIdx = RadioPresets::detect(_candidate.settings());
+    for (int i = 0; i < RadioPresets::count; ++i) {
         char label[40];
         snprintf(label, sizeof(label), "%s[%s]",
-                 (i == activeIdx) ? ">" : " ", RadioPresets::values[i].name);
-        _list.addItem(label, (i == activeIdx) ? Theme::PRIMARY : 0);
+                 i == activeIdx ? ">" : " ", RadioPresets::values[i].name);
+        addRow(label, RowAction::Preset, uint8_t(i), i == activeIdx ? Theme::PRIMARY : 0);
     }
-
-    // Editable fields (items RadioPresets::count+1 .. RadioPresets::count+6)
-    snprintf(buf, sizeof(buf), "Frequency: %lu Hz", (unsigned long)s.loraFrequency);
-    _list.addItem(buf);
-    snprintf(buf, sizeof(buf), "SF: %d", s.loraSF);
-    _list.addItem(buf);
-    snprintf(buf, sizeof(buf), "BW: %lu Hz", (unsigned long)s.loraBW);
-    _list.addItem(buf);
-    snprintf(buf, sizeof(buf), "CR: %d", s.loraCR);
-    _list.addItem(buf);
-    snprintf(buf, sizeof(buf), "TX Power: %d dBm", s.loraTxPower);
-    _list.addItem(buf);
-    snprintf(buf, sizeof(buf), "Preamble: %ld symbols", s.loraPreamble);
-    _list.addItem(buf);
-
-    _list.addItem("< Back");
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::buildWiFiMenu() {
-    _list.clear();
+    clearRows();
     _wifiAction = currentWiFiAction();
     _drawnWiFiAction = WiFiAction::None;
     if (!_config) return;
     auto& s = _candidate.settings();
 
-    // Item 0: Mode selector
     const char* modeNames[] = {"OFF", "AP", "STA"};
     char modeBuf[24];
     snprintf(modeBuf, sizeof(modeBuf), "Mode: %s", modeNames[s.wifiMode]);
-    _list.addItem(modeBuf);
+    addRow(modeBuf, RowAction::WiFiMode);
 
     if (s.wifiMode == RAT_WIFI_AP) {
-        // Items 1-2: AP fields
         String apSSID = s.wifiAPSSID.isEmpty() ? "(auto)" : s.wifiAPSSID;
-        _list.addItem(("AP SSID: " + std::string(apSSID.c_str())));
-        _list.addItem(s.wifiAPPassword.isEmpty() ? "AP Pass: (open)" : "AP Pass: ********");
+        addRow(("AP SSID: " + std::string(apSSID.c_str())), RowAction::Edit, 0);
+        addRow(s.wifiAPPassword.isEmpty() ? "AP Pass: (open)" : "AP Pass: ********", RowAction::Edit, 1);
     } else if (s.wifiMode == RAT_WIFI_STA) {
-        // Item 1: Connection status
         if (_wifiAction == WiFiAction::Disconnect) {
             char statusBuf[48];
             snprintf(statusBuf, sizeof(statusBuf), "Connected: %s", WiFi.SSID().c_str());
-            _list.addItem(statusBuf);
-            _list.addItem("[Disconnect]");          // Item 2
+            addRow(statusBuf);
+            addRow("[Disconnect]", RowAction::WiFiConnection);
         } else if (_wifiAction == WiFiAction::Cancel) {
-            _list.addItem("Connecting...");
-            _list.addItem("[Cancel]");              // Item 2
+            addRow("Connecting...");
+            addRow("[Cancel]", RowAction::WiFiConnection);
         } else if (_wifiAction == WiFiAction::Connect) {
             char statusBuf[48];
             snprintf(statusBuf, sizeof(statusBuf), "Saved: %s (offline)", staNetworkRO(s).ssid.c_str());
-            _list.addItem(statusBuf);
-            _list.addItem("[Connect]");             // Item 2
+            addRow(statusBuf);
+            addRow("[Connect]", RowAction::WiFiConnection);
         } else {
-            _list.addItem("No network configured");
-            _list.addItem("");                      // Item 2 placeholder
+            addRow("No network configured");
+            addRow("");
         }
-        _list.addItem("Scan Networks");             // Item 3
-        _list.addItem("TCP Connections");            // Item 4
-        // Item 5: AutoInterface (LAN auto-discovery via IPv6 multicast)
+        addRow("Scan Networks", RowAction::WiFiScan);
         char autoBuf[40];
         snprintf(autoBuf, sizeof(autoBuf), "Auto-discover LAN: %s",
                  s.autoIfaceEnabled ? "ON" : "OFF");
-        _list.addItem(autoBuf);
+        addRow(autoBuf, RowAction::AutoDiscover);
+        addRow("TCP Connections", RowAction::OpenMenu, MENU_TCP);
     }
     // OFF mode: only mode selector + back
 
-    _list.addItem("< Back");
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::buildTCPMenu() {
-    _list.clear();
+    clearRows();
     if (!_config) return;
     auto& s = _candidate.settings();
 
-    _list.addItem("+ Add Connection");
+    addRow("+ Add Connection", RowAction::TCPAdd);
 
     for (size_t i = 0; i < s.tcpConnections.size(); i++) {
         auto& ep = s.tcpConnections[i];
@@ -220,10 +300,10 @@ void SettingsScreen::buildTCPMenu() {
         snprintf(buf, sizeof(buf), "%s:%d [%s]",
                  ep.host.c_str(), ep.port,
                  ep.autoConnect ? "ON" : "OFF");
-        _list.addItem(buf);
+        addRow(buf, RowAction::TCPToggle, uint8_t(i));
     }
 
-    _list.addItem("< Back");
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::addTCPConnection(const std::string& host, uint16_t port) {
@@ -245,7 +325,7 @@ void SettingsScreen::addTCPConnection(const std::string& host, uint16_t port) {
     // saving one must not block this UI or depend on the peer being online now.
     try { s.tcpConnections.push_back(std::move(ep)); }
     catch (const std::bad_alloc&) { showToast("Settings memory unavailable; retry", 2500); return; }
-    if (applyAndSave()) showToast("Added! Reboot to connect");
+    if (applyAndSave()) showToast("Connection added");
     buildTCPMenu();
 }
 
@@ -274,10 +354,10 @@ void SettingsScreen::removeTCPConnection(int index) {
 // =============================================================================
 
 void SettingsScreen::buildSDCardMenu() {
-    _list.clear();
+    clearRows();
 
     if (_sdStore && _sdStore->isReady()) {
-        _list.addItem("Status: INSERTED");
+        addRow("Status: INSERTED");
 
         char buf[32];
         uint64_t total = _sdStore->totalBytes();
@@ -285,19 +365,19 @@ void SettingsScreen::buildSDCardMenu() {
         uint64_t free = total > used ? total - used : 0;
 
         snprintf(buf, sizeof(buf), "Total: %llu MB", total / (1024 * 1024));
-        _list.addItem(buf);
+        addRow(buf);
         snprintf(buf, sizeof(buf), "Used: %llu MB", used / (1024 * 1024));
-        _list.addItem(buf);
+        addRow(buf);
         snprintf(buf, sizeof(buf), "Free: %llu MB", free / (1024 * 1024));
-        _list.addItem(buf);
+        addRow(buf);
 
-        _list.addItem("Initialize & Restart");
-        _list.addItem("Wipe Data & Restart", Theme::ERROR);
+        addRow("Initialize & Restart", RowAction::SDInitialize);
+        addRow("Wipe Data & Restart", RowAction::SDWipe, 0, Theme::ERROR);
     } else {
-        _list.addItem("Status: NOT INSERTED");
+        addRow("Status: NOT INSERTED");
     }
 
-    _list.addItem("< Back");
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::sdCardFormat() {
@@ -314,7 +394,9 @@ void SettingsScreen::sdCardFormat() {
 // =============================================================================
 
 void SettingsScreen::startWiFiScan() {
+    if (_subMenu != MENU_WIFI_SCAN) _focus[_subMenu] = selectedRow();
     _subMenu = MENU_WIFI_SCAN;
+    _scanVisible = true;
     if (!_scanPending) {
         _scanResults.clear();
         _scanPending = _network.startScan && _network.finishScan && _network.startScan();
@@ -359,36 +441,37 @@ bool SettingsScreen::pollNetworkResults() {
         Serial.printf("[WIFI] Scan results unavailable (bytes=%u heap=%lu largest=%lu)\n",
                       (unsigned)json.length(), (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)ESP.getMaxAllocHeap());
-    if (_subMenu == MENU_WIFI_SCAN)
+    if (_active && _scanVisible && _subMenu == MENU_WIFI_SCAN)
         buildScanResultsMenu(_list.getSelectedIndex() == _list.itemCount() - 1);
     return true;
 }
 
 void SettingsScreen::buildScanResultsMenu(bool preserveBack) {
-    _list.clear();
+    clearRows();
 
     if (_scanPending) {
-        _list.addItem("Scanning...");
+        addRow("Scanning...");
     } else if (_scanOutcome == handheld::ScanResult::Failed) {
-        _list.addItem("Scan failed; retry");
+        addRow("Scan failed; retry");
     } else if (_scanOutcome == handheld::ScanResult::NoMemory) {
-        _list.addItem("Not enough memory; retry");
+        addRow("Not enough memory; retry");
     } else if (_scanOutcome == handheld::ScanResult::Cancelled) {
-        _list.addItem("Scan cancelled");
+        addRow("Scan cancelled");
     } else if (_scanResults.empty()) {
-        _list.addItem("No networks found");
+        addRow("No networks found");
     } else {
-        for (auto& net : _scanResults) {
+        for (size_t i = 0; i < _scanResults.size(); ++i) {
+            const auto& net = _scanResults[i];
             char buf[48];
             const char* lock = (net.encType == WIFI_AUTH_OPEN) ? "" : "*";
             snprintf(buf, sizeof(buf), "%s%s (%d dBm)",
                      lock, net.ssid.c_str(), net.rssi);
-            _list.addItem(buf);
+            addRow(buf, RowAction::WiFiNetwork, uint8_t(i));
         }
     }
 
-    _list.addItem("Rescan");
-    _list.addItem("< Back");
+    addRow("Rescan", RowAction::WiFiScan);
+    addRow("< Back", RowAction::Back);
     // Status rows are informational. Leave retry usable after a failure and
     // retain Back if the user deliberately moved there while scanning.
     _list.setSelected(preserveBack ? _list.itemCount() - 1 :
@@ -403,7 +486,7 @@ void SettingsScreen::disconnectWiFi() {
 }
 
 bool SettingsScreen::pollWiFiStatus() {
-    if (_subMenu != MENU_WIFI || _editing || _wifiAction == currentWiFiAction()) return false;
+    if (!_active || _subMenu != MENU_WIFI || _editing || _wifiAction == currentWiFiAction()) return false;
     const int selected = _list.getSelectedIndex();
     buildWiFiMenu();
     _list.setSelected(selected);
@@ -419,7 +502,7 @@ void SettingsScreen::activateWiFiAction() {
         case WiFiAction::Cancel: case WiFiAction::Disconnect: disconnectWiFi(); break;
         case WiFiAction::None: return;
     }
-    _list.setSelected(2);
+    restoreRow({RowAction::WiFiConnection, 0});
 }
 
 void SettingsScreen::connectWiFi() {
@@ -437,14 +520,22 @@ void SettingsScreen::selectNetwork(int index) {
     if (index < 0 || index >= (int)_scanResults.size()) return;
     if (!_config) return;
 
-    auto& s = _candidate.settings();
-    staNetwork(s).ssid = _scanResults[index].ssid;
-    Serial.printf("[WIFI] Selected: %s\n", staNetwork(s).ssid.c_str());
-
-    // Open password editor
-    _subMenu = MENU_WIFI;
-    // field 1 = STA password in WiFi STA mode
-    startEditing(1, staNetworkRO(s).password.c_str());
+    // Opening a result is only an editor draft. Do not alter the saved profile
+    // or carry another network's secret into an open/new network's editor.
+    const auto& selected = _scanResults[index];
+    const auto& saved = staNetworkRO(_candidate.settings());
+    const bool keepPassword = selected.encType != WIFI_AUTH_OPEN && saved.ssid == selected.ssid;
+    try {
+        const std::string password = keepPassword ? saved.password.c_str() : "";
+        _scanVisible = false;
+        _subMenu = MENU_WIFI;
+        buildWiFiMenu();
+        restoreRow({RowAction::WiFiScan, 0});
+        startEditing(1, password);
+    } catch (const std::bad_alloc&) {
+        _editing = false; _editInput.setActive(false); _editInput.setSubmitCallback(nullptr);
+        showToast("Settings memory unavailable; retry", 2500); return;
+    }
     // A failed transaction restores canonical settings. Keep the selected
     // network bound to retries through the existing, stable scan-result row.
     _editInput.setSubmitCallback([this, index](const std::string& value) {
@@ -470,46 +561,57 @@ void SettingsScreen::selectNetwork(int index) {
 // =============================================================================
 
 void SettingsScreen::buildDisplayMenu() {
-    _list.clear();
+    clearRows();
     if (!_config) return;
     auto& s = _candidate.settings();
     char buf[40];
 
     snprintf(buf, sizeof(buf), "Brightness: %d%%", s.brightness);
-    _list.addItem(buf);
+    addRow(buf, RowAction::Edit, 0);
     snprintf(buf, sizeof(buf), "Dim timeout: %ds", s.screenDimTimeout);
-    _list.addItem(buf);
+    addRow(buf, RowAction::Edit, 1);
     snprintf(buf, sizeof(buf), "Off timeout: %ds", s.screenOffTimeout);
-    _list.addItem(buf);
+    addRow(buf, RowAction::Edit, 2);
+    addRow("< Back", RowAction::Back);
+}
 
+void SettingsScreen::buildIdentityMenu() {
+    clearRows();
+    if (!_config) return;
+    const auto& s = _candidate.settings();
+    char buf[40];
     String name = s.displayName.isEmpty() ? "(none)" : s.displayName;
-    _list.addItem(("Name: " + std::string(name.c_str())));
-    if (s.announceInterval == handheld::announce::Off) _list.addItem("Auto Announce: OFF");
+    addRow(("Name: " + std::string(name.c_str())), RowAction::Edit, 3);
+    addRow("ID: " + std::string(_identityHash.c_str()));
+    if (s.announceInterval == handheld::announce::Off) addRow("Auto Announce: OFF", RowAction::Edit, 4);
     else {
         snprintf(buf, sizeof(buf), "Auto Announce: %um", unsigned(s.announceInterval));
-        _list.addItem(buf);
+        addRow(buf, RowAction::Edit, 4);
     }
-    _list.addItem("< Back");
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::buildAudioMenu() {
-    _list.clear();
+    clearRows();
     if (!_config) return;
     auto& s = _candidate.settings();
     char buf[40];
 
-    _list.addItem(s.audioEnabled ? "Audio: ON" : "Audio: OFF");
+    addRow(s.audioEnabled ? "Audio: ON" : "Audio: OFF", RowAction::AudioToggle);
     snprintf(buf, sizeof(buf), "Volume: %d%%", s.audioVolume);
-    _list.addItem(buf);
-    _list.addItem("< Back");
+    addRow(buf, RowAction::Edit, 1);
+    addRow("< Back", RowAction::Back);
 }
 
 // Start editing a field — show TextInput with current value
 void SettingsScreen::startEditing(int field, const std::string& currentValue) {
     _editField = field;
-    _editLabel = _subMenu == MENU_DISPLAY && field == 4 ? "Announce: 0=OFF, 30-360m" : "";
+    _editLabel = _subMenu == MENU_IDENTITY && field == 4 ? "Announce: 0=OFF, 30-360m" : "";
     _editing = true;
     _editInput.clear();
+    _editInput.setAllowEmptySubmit((_subMenu == MENU_IDENTITY && field == 3) ||
+        (_subMenu == MENU_WIFI && (_candidate.settings().wifiMode == RAT_WIFI_AP ? (field == 0 || field == 1) :
+                                  _candidate.settings().wifiMode == RAT_WIFI_STA && field == 1)));
     _editInput.setText(currentValue);
     _editInput.setActive(true);
     _editInput.setMaxLength(_subMenu == MENU_WIFI && field == 0 ? 32 : 64);
@@ -522,6 +624,8 @@ void SettingsScreen::startEditing(int field, const std::string& currentValue) {
 void SettingsScreen::commitEdit(const std::string& value) {
     if (_config && (_config->settingsPending() || _radioApplyPending)) { showToast("Settings apply pending"); return; }
     if (!_config) return;
+    const Row editedRow = selectedRow();
+    const SubMenu editMenu = _subMenu;
     auto& s = _candidate.settings();
     const auto assign = [this, &value](String& target) {
         if (UserConfig::trySetString(target, value.data(), value.size())) return true;
@@ -626,7 +730,7 @@ void SettingsScreen::commitEdit(const std::string& value) {
             connectWiFi();  // Live reconnect with new credentials
         }
         buildWiFiMenu();
-    } else if (_subMenu == MENU_DISPLAY) {
+    } else if (_subMenu == MENU_DISPLAY || _subMenu == MENU_IDENTITY) {
         int32_t v = 0;
         if (_editField == 4) {
             if (!handheld::settings::parseInteger(value, 0, handheld::announce::MaximumMinutes, v) ||
@@ -649,7 +753,8 @@ void SettingsScreen::commitEdit(const std::string& value) {
             default: return;
         }
         if (!applyAndSave()) return;
-        buildDisplayMenu();
+        if (_subMenu == MENU_IDENTITY) buildIdentityMenu();
+        else buildDisplayMenu();
     } else if (_subMenu == MENU_AUDIO) {
         if (_editField == 1) {
             int32_t v;
@@ -664,6 +769,7 @@ void SettingsScreen::commitEdit(const std::string& value) {
 
     _editing = false;
     _editField = -1;
+    if (_subMenu == editMenu) restoreRow(editedRow);
     } catch (const std::bad_alloc&) { showToast("Settings memory unavailable; retry", 2500); }
 }
 
@@ -694,7 +800,7 @@ std::string SettingsScreen::getCurrentValue(SubMenu menu, int field) {
                 case 1: return staNetworkRO(s).password.c_str();
             }
         }
-    } else if (menu == MENU_DISPLAY) {
+    } else if (menu == MENU_DISPLAY || menu == MENU_IDENTITY) {
         switch (field) {
             case 0: snprintf(buf, sizeof(buf), "%d", s.brightness); return buf;
             case 1: snprintf(buf, sizeof(buf), "%d", s.screenDimTimeout); return buf;
@@ -717,17 +823,26 @@ void SettingsScreen::render(M5Canvas& canvas) {
         return;
     }
     if (_subMenu == MENU_ABOUT) {
-        renderAbout(canvas);
-        return;
+        char value[32];
+        for (size_t i = 0; i < _rowCount; ++i) {
+            if (_rows[i].action == RowAction::Heap) {
+                snprintf(value, sizeof value, "Heap: %lu bytes", (unsigned long)ESP.getFreeHeap());
+                _list.updateItem(i, value, 0);
+            } else if (_rows[i].action == RowAction::Uptime) {
+                snprintf(value, sizeof value, "Up: %lus", millis() / 1000);
+                _list.updateItem(i, value, 0);
+            }
+        }
     }
 
     int y0 = Theme::CONTENT_Y;
 
     // Header with accent bar
-    const char* headers[] = {"SETTINGS", "RADIO", "WIFI", "TCP CONNECTIONS",
-                             "SD CARD", "DISPLAY", "AUDIO", "ABOUT", "WIFI SCAN",
-                             "PROPAGATION", "MANUAL NODE", "PROPAGATION NODES", "VOICE"};
-    static_assert(sizeof(headers) / sizeof(headers[0]) == MENU_VOICE + 1,
+    const char* headers[] = {"SETTINGS", "LORA", "WI-FI & TCP", "TCP CONNECTIONS",
+                             "SD CARD", "DISPLAY", "ALERTS", "DEVICE", "WIFI SCAN",
+                             "PROPAGATION", "MANUAL NODE", "PROPAGATION NODES", "VOICE MESSAGES",
+                             "IDENTITY", "LINK PRESETS"};
+    static_assert(sizeof(headers) / sizeof(headers[0]) == MENU_COUNT,
                   "Every settings menu needs a visible header");
     const int headerH = Theme::SECTION_HEADER_H;
     canvas.fillRect(0, y0, Theme::CONTENT_W, headerH, Theme::BG_SURFACE);
@@ -753,7 +868,8 @@ void SettingsScreen::render(M5Canvas& canvas) {
     } else {
         _list.render(canvas, 0, y0 + headerH + 2, Theme::CONTENT_W,
                      Theme::CONTENT_H - headerH - 3, true,
-                     _subMenu == MENU_PROPAGATION || _subMenu == MENU_PROPAGATION_NODES);
+                     _subMenu == MENU_PROPAGATION || _subMenu == MENU_PROPAGATION_NODES ||
+                     _subMenu == MENU_IDENTITY);
         if (_subMenu == MENU_WIFI) _drawnWiFiAction = _wifiAction;
     }
 
@@ -780,39 +896,19 @@ void SettingsScreen::render(M5Canvas& canvas) {
     }
 }
 
-void SettingsScreen::renderAbout(M5Canvas& canvas) {
-    int y0 = Theme::CONTENT_Y;
-    const int headerH = Theme::SECTION_HEADER_H;
-    canvas.fillRect(0, y0, Theme::CONTENT_W, headerH, Theme::BG_SURFACE);
-    canvas.fillRect(0, y0 + 2, 3, headerH - 4, Theme::ACCENT);
-    Theme::useUiFont(canvas);
-    canvas.setTextColor(Theme::ACCENT);
-    canvas.drawString("About", 8, y0 + 2);
-    canvas.drawFastHLine(0, y0 + headerH, Theme::CONTENT_W, Theme::DIVIDER);
-
-    Theme::useSmallFont(canvas);
-    int y = y0 + headerH + 5;
-    canvas.setTextColor(Theme::PRIMARY);
-    canvas.drawString("rsCardputer v" RSCARDPUTER_VERSION_STRING, 4, y); y += 10;
-
-    canvas.setTextColor(Theme::SECONDARY);
-    canvas.drawString("M5Stack Cardputer Adv", 4, y); y += 10;
-    canvas.drawString("Cap LoRa-1262 (SX1262)", 4, y); y += 10;
-
-    canvas.setTextColor(Theme::MUTED);
-    canvas.drawString("ratspeak.org", 4, y); y += 12;
-
-    canvas.setTextColor(Theme::SECONDARY);
-    String idLine = "ID: " + _identityHash;
-    canvas.drawString(idLine.c_str(), 4, y); y += 10;
-
-    char heap[32];
-    snprintf(heap, sizeof(heap), "Heap: %lu bytes", (unsigned long)ESP.getFreeHeap());
-    canvas.drawString(heap, 4, y); y += 10;
-
-    char uptime[32];
-    snprintf(uptime, sizeof(uptime), "Up: %lus", millis() / 1000);
-    canvas.drawString(uptime, 4, y);
+void SettingsScreen::buildDeviceMenu() {
+    clearRows();
+    addRow("rsCardputer v" RSCARDPUTER_VERSION_STRING);
+    addRow("M5Stack Cardputer Adv");
+    addRow("Cap LoRa-1262 (SX1262)");
+    addRow("ratspeak.org");
+    char value[32];
+    snprintf(value, sizeof value, "Heap: %lu bytes", (unsigned long)ESP.getFreeHeap());
+    addRow(value, RowAction::Heap);
+    snprintf(value, sizeof value, "Up: %lus", millis() / 1000);
+    addRow(value, RowAction::Uptime);
+    addRow("Factory Reset", RowAction::FactoryReset, 0, Theme::ERROR);
+    addRow("< Back", RowAction::Back);
 }
 
 bool SettingsScreen::handleKey(const KeyEvent& event) {
@@ -852,27 +948,17 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
             _candidateDirty = false;
             _editing = false;
             _editField = -1;
+            _editInput.setActive(false);
+            _editInput.setSubmitCallback(nullptr);
             _tcpPendingHost.clear();
             _editLabel.clear();
-            return true;
-        }
-        if (_subMenu == MENU_PROPAGATION_NODES) { showPropagationChoice(); return true; }
-        if (_subMenu == MENU_PROPAGATION_CHOICE) {
-            _subMenu = MENU_PROPAGATION; buildPropagationMenu(); return true;
-        }
-        if (_subMenu == MENU_TCP) {
-            _subMenu = MENU_WIFI;
-            buildWiFiMenu();
-            return true;
-        }
-        if (_subMenu == MENU_WIFI_SCAN) {
-            _subMenu = MENU_WIFI;
-            buildWiFiMenu();
+            const Row selected = selectedRow();
+            rebuildMenu();
+            restoreRow(selected);
             return true;
         }
         if (_subMenu != MENU_MAIN) {
-            _subMenu = MENU_MAIN;
-            buildMainMenu();
+            backMenu();
             return true;
         }
         return false;
@@ -885,10 +971,9 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
 
     // The printed Fn+Backspace Delete action removes a TCP connection.
     if (event.forwardDelete && _subMenu == MENU_TCP) {
-        int sel = _list.getSelectedIndex();
-        int tcpIdx = sel - 1;  // item 0 is "Add", items 1..N are connections
-        if (tcpIdx >= 0 && tcpIdx < (int)_candidate.settings().tcpConnections.size()) {
-            removeTCPConnection(tcpIdx);
+        const Row selected = selectedRow();
+        if (selected.action == RowAction::TCPToggle) {
+            removeTCPConnection(selected.value);
             return true;
         }
     }
@@ -906,170 +991,56 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
         return true;
     }
 
-    // Enter — select item
+    // Selection dispatch is independent of the row's current position.
     if (event.enter) {
-        int sel = _list.getSelectedIndex();
-
-        if (_subMenu == MENU_MAIN) {
-            switch (sel) {
-                case 0: _subMenu = MENU_RADIO; buildRadioMenu(); break;
-                case 1: _subMenu = MENU_WIFI; buildWiFiMenu(); break;
-                case 2: _subMenu = MENU_SDCARD; buildSDCardMenu(); break;
-                case 3: _subMenu = MENU_DISPLAY; buildDisplayMenu(); break;
-                case 4: _subMenu = MENU_AUDIO; buildAudioMenu(); break;
-                case 5: _subMenu = MENU_ABOUT; break;
-                case 6: _confirmPending = true; _confirmAction = 0; break;
-                case 7: _subMenu = MENU_PROPAGATION; buildPropagationMenu(); break;
-                case 8: _subMenu = MENU_VOICE; buildVoiceMenu(); break;
+        const Row selected = selectedRow();
+        switch (selected.action) {
+            case RowAction::OpenMenu: enterMenu(SubMenu(selected.value)); break;
+            case RowAction::Back: backMenu(); break;
+            case RowAction::Edit:
+                startEditing(selected.value, getCurrentValue(_subMenu, selected.value)); break;
+            case RowAction::Preset: applyRadioPreset(selected.value); break;
+            case RowAction::WiFiMode: {
+                auto& s = _candidate.settings();
+                s.wifiMode = RatWiFiMode((int(s.wifiMode) + 1) % 3);
+                if (applyAndSave()) showToast("Reboot to apply");
+                buildWiFiMenu(); break;
             }
-            return true;
-        }
-
-        if (_subMenu == MENU_PROPAGATION || _subMenu == MENU_PROPAGATION_CHOICE ||
-            _subMenu == MENU_PROPAGATION_NODES) { activatePropagationRow(sel); return true; }
-
-        if(_subMenu==MENU_VOICE) {activateVoiceRow(sel);return true;}
-
-        // WiFi scan results handling
-        if (_subMenu == MENU_WIFI_SCAN) {
-            if (event.repeat) return true;
-            int lastItem = _list.itemCount() - 1;
-            int rescanItem = lastItem - 1;
-
-            if (sel == lastItem) {
-                // "< Back"
-                _subMenu = MENU_WIFI;
-                buildWiFiMenu();
-            } else if (sel == rescanItem) {
-                // "[Rescan]"
-                startWiFiScan();
-            } else if (sel < (int)_scanResults.size()) {
-                selectNetwork(sel);
-            }
-            return true;
-        }
-
-        // "Back" is always last item
-        if (sel == _list.itemCount() - 1) {
-            if (_subMenu == MENU_TCP) {
-                _subMenu = MENU_WIFI;
-                buildWiFiMenu();
-            } else {
-                _subMenu = MENU_MAIN;
-                buildMainMenu();
-            }
-            return true;
-        }
-
-        // Handle radio presets (items 1..RadioPresets::count; item 0 is the "Active:" label)
-        if (_subMenu == MENU_RADIO && sel >= 1 && sel <= RadioPresets::count) {
-            applyRadioPreset(sel - 1);
-            return true;
-        }
-        // Item 0 ("Active: ...") is non-interactive
-        if (_subMenu == MENU_RADIO && sel == 0) {
-            return true;
-        }
-
-        // Toggle audio on/off (item 0 in Audio menu)
-        if (_subMenu == MENU_AUDIO && sel == 0) {
-            auto& s = _candidate.settings();
-            s.audioEnabled = !s.audioEnabled;
-            applyAndSave();
-            buildAudioMenu();
-            return true;
-        }
-
-        // Cycle WiFi mode (item 0 in WiFi menu)
-        if (_subMenu == MENU_WIFI && sel == 0) {
-            auto& s = _candidate.settings();
-            s.wifiMode = (RatWiFiMode)(((int)s.wifiMode + 1) % 3);
-            if (applyAndSave()) showToast("Reboot to apply");
-            buildWiFiMenu();
-            return true;
-        }
-
-        // STA mode WiFi menu actions
-        if (_subMenu == MENU_WIFI && _candidate.settings().wifiMode == RAT_WIFI_STA) {
-            if (sel == 1) {
-                // Status line (non-interactive)
-                return true;
-            }
-            if (sel == 2) {
+            case RowAction::WiFiConnection:
                 if (!event.repeat) activateWiFiAction();
-                return true;
-            }
-            if (sel == 3) {
-                // [Scan Networks]
-                startWiFiScan();
-                return true;
-            }
-            if (sel == 4) {
-                // > TCP Connections
-                _subMenu = MENU_TCP;
-                buildTCPMenu();
-                return true;
-            }
-            if (sel == 5) {
-                // Toggle Auto-discover LAN (AutoInterface).  IPv6 enable
-                // is one-shot per WiFi init, so changes take effect on
-                // next reboot.
+                break;
+            case RowAction::WiFiScan:
+                if (!event.repeat) startWiFiScan();
+                break;
+            case RowAction::WiFiNetwork:
+                if (!event.repeat) selectNetwork(selected.value);
+                break;
+            case RowAction::AutoDiscover: {
                 auto& s = _candidate.settings();
                 s.autoIfaceEnabled = !s.autoIfaceEnabled;
                 if (applyAndSave()) showToast("Reboot to apply");
-                buildWiFiMenu();
-                return true;
+                buildWiFiMenu(); restoreRow(selected); break;
             }
-        }
-
-        // SD Card menu actions
-        if (_subMenu == MENU_SDCARD) {
-            if (_sdStore && _sdStore->isReady()) {
-                // Item 4 = Initialize, Item 5 = Wipe All Data
-                if (sel == 4) {
-                    sdCardFormat();
-                    return true;
+            case RowAction::TCPAdd:
+                startEditing(99, ""); _editLabel = "Host:";
+                _editInput.setNumericOnly(false); break;
+            case RowAction::TCPToggle:
+                toggleTCPConnection(selected.value); restoreRow(selected); break;
+            case RowAction::AudioToggle: {
+                auto& s = _candidate.settings(); s.audioEnabled = !s.audioEnabled;
+                applyAndSave(); buildAudioMenu(); break;
+            }
+            case RowAction::SDInitialize: sdCardFormat(); break;
+            case RowAction::SDWipe:
+                if (_sdStore && _sdStore->isReady()) {
+                    _confirmPending = true; _confirmAction = 1;
                 }
-                if (sel == 5) {
-                    _confirmPending = true;
-                    _confirmAction = 1;
-                    return true;
-                }
-            }
-            // Info items are non-interactive
-            return true;
+                break;
+            case RowAction::FactoryReset: _confirmPending = true; _confirmAction = 0; break;
+            case RowAction::Voice: activateVoiceRow(selected.value); break;
+            case RowAction::Propagation: activatePropagationRow(selected.value); break;
+            case RowAction::Info: case RowAction::Heap: case RowAction::Uptime: break;
         }
-
-        // TCP submenu actions
-        if (_subMenu == MENU_TCP) {
-            if (sel == 0) {
-                // Add new connection — open host input first
-                _editField = 99;
-                _editing = true;
-                _editLabel = "Host:";
-                _editInput.clear();
-                _editInput.setActive(true);
-                _editInput.setMaxLength(64);
-                _editInput.setNumericOnly(false);
-                _editInput.setSubmitCallback([this](const std::string& value) {
-                    commitEdit(value);
-                });
-                return true;
-            }
-            int tcpIdx = sel - 1;
-            if (tcpIdx >= 0 && tcpIdx < (int)_candidate.settings().tcpConnections.size()) {
-                toggleTCPConnection(tcpIdx);
-                return true;
-            }
-            return true;  // Back handled above
-        }
-
-        // Edit the selected field (offset by 1+RadioPresets::count for radio header+presets, 1 for WiFi mode)
-        int fieldIdx = sel;
-        if (_subMenu == MENU_RADIO) fieldIdx -= (1 + RadioPresets::count);
-        if (_subMenu == MENU_WIFI) fieldIdx -= 1;
-        std::string currentVal = getCurrentValue(_subMenu, fieldIdx);
-        startEditing(fieldIdx, currentVal);
         return true;
     }
 
@@ -1126,9 +1097,9 @@ void SettingsScreen::applyCommitted(bool refreshCandidate) {
 
 void SettingsScreen::finishRadioApply(RadioApply result) {
     _radioApplyPending = result == RadioApply::Pending;
-    if (_subMenu == MENU_RADIO) {
-        const int selected = _list.getSelectedIndex();
-        buildRadioMenu(); _list.setSelected(selected);
+    if (_subMenu == MENU_RADIO || _subMenu == MENU_RADIO_PRESETS) {
+        const Row selected = selectedRow();
+        rebuildMenu(); restoreRow(selected);
     }
     if (_radioApplyPending) { showToast("Saved; waiting for radio", 2500); return; }
     const bool announce = _presetAnnouncePending && result == RadioApply::Applied;
@@ -1165,7 +1136,8 @@ void SettingsScreen::applyRadioPreset(int preset) {
     RadioPresets::apply(_candidate.settings(), preset);
     const bool saved = applyAndSave();
     if (!saved && !_config->settingsPending() && !_radioApplyPending) _presetAnnouncePending = false;
-    buildRadioMenu();
+    const Row selected = selectedRow();
+    rebuildMenu(); restoreRow(selected);
 }
 
 void SettingsScreen::factoryReset() {

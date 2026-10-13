@@ -35,6 +35,7 @@ public:
     void setActive(bool active) { _active = active; }
     void setMaxLength(int len) { _maxLength = len; }
     void setNumericOnly(bool numeric) { _numericOnly = numeric; }
+    void setAllowEmptySubmit(bool allow) { _allowEmptySubmit = allow; }
 
     // Callback when Enter is pressed
     using SubmitCallback = std::function<void(const std::string&)>;
@@ -50,5 +51,6 @@ private:
     unsigned long _lastBlink = 0;
     int _maxLength = 200;
     bool _numericOnly = false;
+    bool _allowEmptySubmit = false;
     SubmitCallback _submitCb;
 };

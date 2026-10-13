@@ -38,6 +38,7 @@
 #include "transport/RnsAutoInterface.h"
 #include "config/UserConfig.h"
 #include "config/SettingsTransaction.h"
+#include "config/NetworkSettings.h"
 #include "screens/NodesScreen.h"
 #include "screens/MessagesScreen.h"
 #include "screens/MessageView.h"
@@ -115,6 +116,7 @@ uint32_t maintenanceNextId = 0;
 bool maintenanceRestart = false;
 enum class CardSettingsStep : uint8_t { Settings, Name, Timezone };
 CardSettingsStep pendingSettingsStep = CardSettingsStep::Settings;
+uint8_t pendingNetworkChanges = handheld::network_settings::None;
 uint32_t lastSettingsRetry = 0;
 SettingsScreen settingsScreen;
 TimezoneScreen timezoneScreen;
@@ -243,13 +245,20 @@ static void finishCardSettings(CardSettingsStep step) {
 static SettingsTransaction::Result saveCardSettings(UserConfig& candidate, CardSettingsStep step) {
     if (!maintenance.accepting()) return {SettingsTransaction::State::Invalid, "Shutdown in progress"};
     if (settingsScreen.radioApplyPending()) return {SettingsTransaction::State::Invalid, "Waiting for radio"};
+    const bool alreadyPending = userConfig.settingsPending();
+    const uint8_t networkChanges = alreadyPending ? handheld::network_settings::None :
+        handheld::network_settings::changes(userConfig.settings(), candidate.settings());
     const auto result = SettingsTransaction::apply(userConfig, candidate, identityMgr, sdStore, flash);
     const bool pending = result.state == SettingsTransaction::State::Pending;
-    if (pending) { pendingSettingsStep = step; lastSettingsRetry = millis(); }
+    if (pending && !alreadyPending) {
+        pendingSettingsStep = step; pendingNetworkChanges = networkChanges;
+        lastSettingsRetry = millis();
+    }
     const char* caption = pending ? "Save pending; please wait" : result.complete() ? nullptr : "Save failed; Enter retries";
     if (step == CardSettingsStep::Name) nameInputScreen.setSaveStatus(caption, pending);
     if (step == CardSettingsStep::Timezone) timezoneScreen.setSaveStatus(caption, pending);
     if (result.complete()) {
+        network.settingsCommitted(userConfig.settings(), networkChanges);
         if (step != CardSettingsStep::Settings) settingsScreen.applyCommitted();
         if (settingsScreen.radioApplyPending()) pendingSettingsStep = step;
         else finishCardSettings(step);
@@ -264,7 +273,10 @@ static void pollCardSettings() {
     const auto result = SettingsTransaction::recover(userConfig, identityMgr, sdStore, flash);
     if (!result.complete()) return;
     // Failed maintenance can finish cleanup, never invoke an old UI/hardware continuation.
+    const uint8_t networkChanges = pendingNetworkChanges;
+    pendingNetworkChanges = handheld::network_settings::None;
     if (maintenance.accepting()) {
+        network.settingsCommitted(userConfig.settings(), networkChanges);
         settingsScreen.applyCommitted();
         if (settingsScreen.radioApplyPending()) return;
         finishCardSettings(pendingSettingsStep);
@@ -1013,7 +1025,18 @@ void loop() {
 
     if (maintenance.accepting()) {
         const auto events = network.poll(userConfig.settings(), rnsDuration,
-            handheld::NetworkCoordinator::CardBudget);
+            handheld::NetworkCoordinator::CardBudget, []() {
+                return maintenance.accepting() && !settingsScreen.radioApplyPending() &&
+                    !handheld::memo::busy(backend->memoStatus().phase) &&
+                    backend->pollRadioBeforeBlockingWork();
+            });
+        if (events & handheld::NetworkCoordinator::HotspotChanged) {
+            using Result = handheld::NetworkCoordinator::HotspotResult;
+            const auto result = network.hotspotResult();
+            settingsScreen.notifyNetworkOutcome(result == Result::Applied ? "Hotspot updated" :
+                result == Result::NeedsRestart ? "Saved; restart to apply hotspot" :
+                "Saved; hotspot unavailable; restart");
+        }
         if (events & handheld::NetworkCoordinator::Connected) {
             Serial.printf("[WIFI] STA connected: %s\n", WiFi.localIP().toString().c_str());
             static bool ntpStarted = false;

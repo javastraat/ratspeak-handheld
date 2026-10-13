@@ -36,6 +36,7 @@ void TextInput::clear() {
     _text.clear();
     _cursorPos = 0;
     _numericOnly = false;
+    _allowEmptySubmit = false;
 }
 
 bool TextInput::handleKey(const KeyEvent& event) {
@@ -43,7 +44,7 @@ bool TextInput::handleKey(const KeyEvent& event) {
 
     // Enter → submit
     if (event.enter) {
-        if (_submitCb && !_text.empty()) {
+        if (_submitCb && (_allowEmptySubmit || !_text.empty())) {
             _submitCb(_text);
         }
         return true;

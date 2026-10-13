@@ -20,7 +20,12 @@ public:
     void stopFull();
 
     // AP config
-    void setAPCredentials(const char* ssid, const char* password);
+    struct APCredentials { String ssid, password; };
+    // Stage all allocation before an existing AP is stopped. Empty SSID chooses
+    // the generated name; empty password deliberately selects an open AP.
+    static bool prepareAPCredentials(const char* ssid, const char* password, APCredentials& prepared);
+    void setAPCredentials(APCredentials&& prepared);
+    bool setAPCredentials(const char* ssid, const char* password);
     String getAPSSID() const { return _apSSID; }
     int getClientCount() const { return _clients.size(); }
     bool isAPActive() const { return _apActive; }
@@ -73,7 +78,7 @@ private:
     String _apPassword;
     String _staSSID;
     String _staPassword;
-    bool _apActive = false;
+    bool _apActive = false, _apConfigured = false;
 
     WiFiServer _server;
     std::vector<WiFiClient> _clients;

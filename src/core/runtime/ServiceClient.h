@@ -96,6 +96,10 @@ public:
     // Pending Send only. Completion is still consumed; navigation does not cancel.
     bool cancelSend(uint32_t requestId) { return _mailbox.cancelSend(requestId); }
     bool applySettings(Completion completion = {}, bool applyRadio = true);
+    // Abandon an unsubmitted UI edit without writing settings. If restoration
+    // cannot allocate, block further saves until the normal canonical refresh.
+    // An already accepted request/query retains its completion ownership.
+    bool discardSettingsEdit();
     bool available() const { return _mailbox.accepting(); }
     bool settingsPending() const { return _settingsPending || _settingsQuery || _settingsRefresh; }
     void watchHistory(const std::string& peer);

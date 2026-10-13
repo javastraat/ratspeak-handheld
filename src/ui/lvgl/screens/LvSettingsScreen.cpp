@@ -1,6 +1,8 @@
 #include "LvSettingsScreen.h"
 #include "LvPrivacy.h"
 #include <new>
+#include <algorithm>
+#include <cctype>
 #include "Theme.h"
 #include "LvTheme.h"
 #include "LvInput.h"
@@ -21,10 +23,6 @@
 #include "fonts/fonts.h"
 
 namespace {
-
-bool labelEq(const char* a, const char* b) {
-    return a && b && strcmp(a, b) == 0;
-}
 
 const char* onOff(bool enabled) {
     return enabled ? "ON" : "OFF";
@@ -81,14 +79,6 @@ String maskedValue(const String& value) {
     return masked;
 }
 
-bool isWiFiSSIDLabel(const char* label) {
-    return labelEq(label, "WiFi SSID");
-}
-
-bool isWiFiPasswordLabel(const char* label) {
-    return labelEq(label, "WiFi Password");
-}
-
 size_t selectedWiFiSlot(const UserSettings& s) {
     return s.wifiSTASelected < WIFI_STA_MAX_NETWORKS ? s.wifiSTASelected : 0;
 }
@@ -114,6 +104,33 @@ String selectedWiFiSSID(const UserSettings& s) {
     size_t slot = selectedWiFiSlot(s);
     if (slot >= s.wifiSTANetworks.size()) return String("");
     return s.wifiSTANetworks[slot].ssid;
+}
+
+bool hasTcpHost(const String& host) {
+    for (size_t i = 0; i < host.length(); ++i)
+        if (!std::isspace(static_cast<unsigned char>(host[i]))) return true;
+    return false;
+}
+
+int customTcpEndpoint(const UserSettings& settings) {
+    int retained = -1;
+    for (size_t i = 0; i < settings.tcpConnections.size(); ++i) {
+        const auto& endpoint = settings.tcpConnections[i];
+        if (!hasTcpHost(endpoint.host) || endpoint.host == RATSPEAK_HUB_HOST) continue;
+        if (endpoint.autoConnect) return int(i);
+        if (retained < 0) retained = int(i);
+    }
+    return retained;
+}
+
+int selectedTcpEndpoint(const UserSettings& settings) {
+    for (size_t i = 0; i < settings.tcpConnections.size(); ++i)
+        if (settings.tcpConnections[i].autoConnect && hasTcpHost(settings.tcpConnections[i].host)) return int(i);
+    const int custom = customTcpEndpoint(settings);
+    if (custom >= 0) return custom;
+    for (size_t i = 0; i < settings.tcpConnections.size(); ++i)
+        if (hasTcpHost(settings.tcpConnections[i].host)) return int(i);
+    return -1;
 }
 
 void clipLabel(lv_obj_t* lbl, int width) {
@@ -158,54 +175,53 @@ void LvSettingsScreen::skipToNextEditable(int dir) {
 bool LvSettingsScreen::settingNeedsReboot(const SettingItem& item) const {
     if (!_cfg) return false;
     const auto& s = _cfg->settings();
-    if (labelEq(item.label, "WiFi Mode")) return s.wifiMode != _rebootSnap.wifiMode;
-    if (labelEq(item.label, "LoRa Radio")) return loraSettingsChanged();
-    if (labelEq(item.label, "WiFi Profile")) return s.wifiSTASelected != _rebootSnap.wifiSTASelected;
-    if (isWiFiSSIDLabel(item.label) || isWiFiPasswordLabel(item.label)) return interfaceSettingsChanged();
-    if (labelEq(item.label, "Scan Networks") || labelEq(item.label, "Forget Network")) return interfaceSettingsChanged();
-    if (labelEq(item.label, "TCP Server") || labelEq(item.label, "Host") ||
-        labelEq(item.label, "Port")) return tcpSettingsChanged();
-    if (labelEq(item.label, "LAN Discovery")) return s.autoIfaceEnabled != _rebootSnap.autoIfaceEnabled;
-    if (labelEq(item.label, "SD Message Store")) return storageSettingsChanged();
+    if (item.id == SettingId::WiFiMode) return s.wifiMode != _rebootSnap.wifiMode;
+    if (item.id == SettingId::LoRaRadio) return loraSettingsChanged();
+    if (item.id == SettingId::WiFiProfile) return s.wifiSTASelected != _rebootSnap.wifiSTASelected;
+    if (item.id == SettingId::WiFiSsid || item.id == SettingId::WiFiPassword) return interfaceSettingsChanged();
+    if (item.id == SettingId::WiFiScan || item.id == SettingId::WiFiForget) return interfaceSettingsChanged();
+    if (item.id == SettingId::TcpServer || item.id == SettingId::TcpHost ||
+        item.id == SettingId::TcpPort) return tcpSettingsChanged();
+    if (item.id == SettingId::LanDiscovery) return s.autoIfaceEnabled != _rebootSnap.autoIfaceEnabled;
+    if (item.id == SettingId::SdMessageStore) return storageSettingsChanged();
     return false;
 }
 
 bool LvSettingsScreen::categoryNeedsReboot(int catIdx) const {
     if (catIdx < 0 || catIdx >= (int)_categories.size()) return false;
-    if (labelEq(_categories[catIdx].name, "LoRa")) {
+    if (_categories[catIdx].id == SettingsCategoryId::LoRa) {
         return loraSettingsChanged();
     }
-    if (labelEq(_categories[catIdx].name, "Network")) {
+    if (_categories[catIdx].id == SettingsCategoryId::Network) {
         return interfaceSettingsChanged() || tcpSettingsChanged();
     }
-    if (labelEq(_categories[catIdx].name, "Storage & Maintenance")) {
+    if (_categories[catIdx].id == SettingsCategoryId::Storage) {
         return storageSettingsChanged();
     }
     return false;
 }
 
 bool LvSettingsScreen::confirmableAction(const SettingItem& item) const {
-    return labelEq(item.label, "Developer Radio Controls")
-        || labelEq(item.label, "Format SD Card")
-        || labelEq(item.label, "Erase " DEVICE_NAME " SD Data")
-        || labelEq(item.label, "Erase Device");
+    return item.id == SettingId::DeveloperControls
+        || item.id == SettingId::InitializeSd
+        || item.id == SettingId::EraseSd
+        || item.id == SettingId::EraseDevice;
 }
 
 bool LvSettingsScreen::armedAction(const SettingItem& item) const {
-    return (_confirmingInitSD && labelEq(item.label, "Format SD Card")) ||
-        (_confirmingWipeSD && labelEq(item.label, "Erase " DEVICE_NAME " SD Data")) ||
-        (_confirmingReset && labelEq(item.label, "Erase Device")) ||
-        (_confirmingDevMode && labelEq(item.label, "Developer Radio Controls"));
+    return (_confirmingInitSD && item.id == SettingId::InitializeSd) ||
+        (_confirmingWipeSD && item.id == SettingId::EraseSd) ||
+        (_confirmingReset && item.id == SettingId::EraseDevice) ||
+        (_confirmingDevMode && item.id == SettingId::DeveloperControls);
 }
 
 bool LvSettingsScreen::destructiveAction(const SettingItem& item) const {
-    return labelEq(item.label, "Format SD Card")
-        || labelEq(item.label, "Erase " DEVICE_NAME " SD Data")
-        || labelEq(item.label, "Erase Device");
+    return item.id == SettingId::EraseSd
+        || item.id == SettingId::EraseDevice;
 }
 
 const char* LvSettingsScreen::confirmationTitle() const {
-    if (_confirmingInitSD) return "ARMED: FORMAT SD CARD";
+    if (_confirmingInitSD) return "ARMED: INITIALIZE SD";
     if (_confirmingWipeSD) return "ARMED: ERASE SD DATA";
     if (_confirmingReset) return "ARMED: ERASE DEVICE";
     if (_confirmingDevMode) return "ARMED: UNLOCK RF CONTROLS";
@@ -213,7 +229,7 @@ const char* LvSettingsScreen::confirmationTitle() const {
 }
 
 const char* LvSettingsScreen::confirmationDetail() const {
-    if (_confirmingInitSD) return "Hold " BOARD_CONFIRM_INPUT_NAME " to format. Backspace cancels.";
+    if (_confirmingInitSD) return "Hold " BOARD_CONFIRM_INPUT_NAME ": initialize & restart. Back cancels.";
     if (_confirmingWipeSD) return "Hold " BOARD_CONFIRM_INPUT_NAME " to erase SD data. Backspace cancels.";
     if (_confirmingReset) return "Hold " BOARD_CONFIRM_INPUT_NAME " to erase device. Backspace cancels.";
     if (_confirmingDevMode) return "Hold " BOARD_CONFIRM_INPUT_NAME " to unlock. Backspace cancels.";
@@ -254,12 +270,20 @@ void LvSettingsScreen::runEnableDevMode() {
     }
     _cfg->settings().devMode = true;
     if (!_service) { _cfg->settings().devMode = false; return; }
-    _service->applySettings([this](const handheld::Result& result) {
-        buildItems();
-        if (_scrollContainer && _view == SettingsView::ITEM_LIST) enterCategory(_categoryIdx);
+    const auto generation = _fwViewGeneration;
+    const bool admitted = _service->applySettings([this, generation](const handheld::Result& result) {
+        _itemsNeedRebuild = true;
+        if (!_viewActive || generation != _fwViewGeneration || _service->settingsPending()) return;
+        buildItems(); _itemsNeedRebuild = false;
+        if (_scrollContainer && _view == SettingsView::ITEM_LIST) rebuildItemList();
+        else if (_scrollContainer && _view == SettingsView::CATEGORY_LIST) rebuildCategoryList();
         if (result.outcome == handheld::Outcome::Ok && _ui)
             _ui->lvStatusBar().showToast("Developer radio controls unlocked", 1500);
     });
+    if (!admitted) {
+        _service->discardSettingsEdit();
+        _itemsNeedRebuild = true;
+    }
 }
 
 void LvSettingsScreen::startFirmwareCheck() {
@@ -335,32 +359,326 @@ void LvSettingsScreen::firmwareCheckTask(void* arg) {
 }
 
 void LvSettingsScreen::buildItems() {
+    // Rebuilding after an identity refresh or developer-mode change can move
+    // every later row. Restore the current category and item by identity.
+    SettingsCategoryId category = SettingsCategoryId::None;
+    SettingId selected = SettingId::None;
+    if (_view == SettingsView::ITEM_LIST || _view == SettingsView::CATEGORY_LIST) {
+        auto* focused = lv_group_get_focused(LvInput::group());
+        for (auto* row : _rowObjs) {
+            if (row != focused) continue;
+            const int index = int(intptr_t(lv_obj_get_user_data(row)));
+            if (_view == SettingsView::CATEGORY_LIST) _categoryIdx = index;
+            else _selectedIdx = index;
+            break;
+        }
+    }
+    if (_categoryIdx >= 0 && _categoryIdx < int(_categories.size()))
+        category = _categories[_categoryIdx].id;
+    if (_selectedIdx >= 0 && _selectedIdx < int(_items.size()))
+        selected = _items[_selectedIdx].id;
     _items.clear();
     _categories.clear();
     if (!_cfg) return;
     auto& s = _cfg->settings();
     int idx = 0;
 
-    // Identity & Device
+    // LoRa link
+    int radioStart = idx;
+    _items.push_back({"LoRa Radio", SettingType::TOGGLE,
+        [&s]() { return s.loraEnabled ? 1 : 0; },
+        [&s](int v) { s.loraEnabled = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::LoRaRadio;
+    idx++;
+    {
+        // Explicitly choosing a region restores its default frequency.
+        SettingItem regionItem;
+        regionItem.label = "Region Preset";
+        regionItem.type = SettingType::ENUM_CHOICE;
+        regionItem.getter = [&s]() {
+            int region = constrain(s.radioRegion, 0, REGION_COUNT - 1);
+            return s.loraFrequency == REGION_FREQ[region] ? region : (int)REGION_COUNT;
+        };
+        regionItem.setter = [&s](int v) {
+            if (v < 0 || v >= REGION_COUNT) return; // Keep the displayed Custom value.
+            s.radioRegion = v;
+            s.loraFrequency = REGION_FREQ[v];
+        };
+        regionItem.minVal = 0; regionItem.maxVal = REGION_COUNT - 1; regionItem.step = 1;
+        regionItem.enumLabels = {REGION_LABELS[0], REGION_LABELS[1], REGION_LABELS[2], REGION_LABELS[3], "Custom"};
+        _items.push_back(regionItem);
+        _items.back().id = SettingId::RegionPreset;
+        idx++;
+
+        SettingItem presetItem;
+        presetItem.label = "Link Preset";
+        presetItem.type = SettingType::ENUM_CHOICE;
+        presetItem.getter = [this]() { int p = detectPreset(); return (p >= 0) ? p : RadioPresets::count; };
+        presetItem.setter = [this](int v) { if (v >= 0 && v < RadioPresets::count) applyPreset(v); };
+        presetItem.minVal = 0; presetItem.maxVal = RadioPresets::count - 1; presetItem.step = 1;
+        presetItem.enumLabels = {};
+        for (int i = 0; i < RadioPresets::count; i++)
+            presetItem.enumLabels.push_back(RadioPresets::values[i].name);
+        presetItem.enumLabels.push_back("Custom");
+        _items.push_back(presetItem);
+        _items.back().id = SettingId::LinkPreset;
+        idx++;
+    }
+    // Custom radio parameters - only visible in Developer Mode
+    if (s.devMode) {
+        _items.push_back({"Frequency", SettingType::INTEGER,
+            [&s]() { return (int)(s.loraFrequency); },
+            [&s](int v) { s.loraFrequency = (uint32_t)v; },
+            [](int v) { return formatRadioFrequency(v); },
+            LORA_MIN_FREQUENCY, LORA_MAX_FREQUENCY, 125000});
+        _items.back().id = SettingId::Frequency;
+        idx++;
+        _items.push_back({"TX Power", SettingType::INTEGER,
+            [&s]() { return s.loraTxPower; }, [&s](int v) { s.loraTxPower = v; },
+            [](int v) { return String(v) + " dBm"; }, -9, 22, 1});
+        _items.back().id = SettingId::TxPower;
+        idx++;
+        _items.push_back({"Spread Factor", SettingType::INTEGER,
+            [&s]() { return s.loraSF; }, [&s](int v) { s.loraSF = v; },
+            [](int v) { return String("SF") + String(v); }, 5, 12, 1});
+        _items.back().id = SettingId::SpreadFactor;
+        idx++;
+        _items.push_back({"Bandwidth", SettingType::ENUM_CHOICE,
+            [&s]() { return RadioBandwidth::index(s.loraBW); },
+            [&s](int v) { s.loraBW = RadioBandwidth::values[constrain(v, 0, RadioBandwidth::count - 1)].hz; },
+            nullptr, 0, RadioBandwidth::count - 1, 1, {}});
+        for (const auto& bandwidth : RadioBandwidth::values)
+            _items.back().enumLabels.push_back(bandwidth.label);
+        _items.back().id = SettingId::Bandwidth;
+        idx++;
+        _items.push_back({"Coding Rate", SettingType::INTEGER,
+            [&s]() { return s.loraCR; }, [&s](int v) { s.loraCR = v; },
+            [](int v) { return String("4/") + String(v); }, 5, 8, 1});
+        _items.back().id = SettingId::CodingRate;
+        idx++;
+        _items.push_back({"Preamble", SettingType::INTEGER,
+            [&s]() { return (int)s.loraPreamble; }, [&s](int v) { s.loraPreamble = v; },
+            [](int v) { return String(v); }, 6, 65, 1});
+        _items.back().id = SettingId::Preamble;
+        idx++;
+    }
+    _categories.push_back({"LoRa", radioStart, idx - radioStart,
+        [this]() {
+            if (loraSettingsChanged()) {
+                return String("Saved - reboot to apply");
+            }
+            int p = detectPreset();
+            auto& s = _cfg->settings();
+            if (!s.loraEnabled) return String("Off");
+            String label = (p >= 0) ? String(RadioPresets::values[p].name) : String("Custom");
+            label += " ";
+            label += formatRadioFrequency(s.loraFrequency);
+            if (s.devMode) label += " / Dev";
+            return label;
+        }});
+    _categories.back().id = SettingsCategoryId::LoRa;
+
+    // Network
+    int netStart = idx;
+    _items.push_back({"WiFi Mode", SettingType::ENUM_CHOICE,
+        [&s]() { return (int)s.wifiMode; },
+        [&s](int v) {
+            s.wifiMode = (RatWiFiMode)v;
+            if (s.wifiMode != RAT_WIFI_OFF) s.wifiRestoreMode = s.wifiMode;
+        },
+        nullptr, 0, 2, 1, {"Off", "Hotspot", "Client"}});
+    _items.back().id = SettingId::WiFiMode;
+    idx++;
+    _items.push_back({"WiFi Profile", SettingType::INTEGER,
+        [&s]() { return (int)selectedWiFiSlot(s) + 1; },
+        [&s](int v) { s.wifiSTASelected = (uint8_t)constrain(v - 1, 0, (int)WIFI_STA_MAX_NETWORKS - 1); },
+        [&s](int v) { return wifiProfileValue(s, constrain(v - 1, 0, (int)WIFI_STA_MAX_NETWORKS - 1)); },
+        1, (int)WIFI_STA_MAX_NETWORKS, 1});
+    _items.back().id = SettingId::WiFiProfile;
+    idx++;
+    {
+        SettingItem scanItem;
+        scanItem.label = "Scan Networks";
+        scanItem.type = SettingType::ACTION;
+        scanItem.formatter = [](int) { return String("[Enter]"); };
+        scanItem.action = [this, &s]() {
+            _wifiTargetSlot = selectedWiFiSlot(s);
+            showWifiPicker();
+        };
+        _items.push_back(scanItem);
+        _items.back().id = SettingId::WiFiScan;
+        idx++;
+    }
+    {
+        SettingItem ssidItem;
+        ssidItem.label = "WiFi SSID";
+        ssidItem.type = SettingType::TEXT_INPUT;
+        ssidItem.textGetter = [&s]() -> const String& {
+            static const String empty;
+            size_t slot = selectedWiFiSlot(s);
+            return slot < s.wifiSTANetworks.size() ? s.wifiSTANetworks[slot].ssid : empty;
+        };
+        ssidItem.textSetter = [&s](const String& v) {
+            size_t slot = selectedWiFiSlot(s);
+            ensureWiFiSlot(s, slot);
+            if (slot >= s.wifiSTANetworks.size()) return false;
+            const bool changed = s.wifiSTANetworks[slot].ssid != v;
+            if (!UserConfig::trySetString(s.wifiSTANetworks[slot].ssid, v.c_str(), v.length())) return false;
+            if (changed || v.isEmpty()) s.wifiSTANetworks[slot].password = "";
+            return true;
+        };
+        ssidItem.maxTextLen = 32;
+        _items.push_back(ssidItem);
+        _items.back().id = SettingId::WiFiSsid;
+        idx++;
+    }
+    {
+        SettingItem passItem;
+        passItem.label = "WiFi Password";
+        passItem.type = SettingType::TEXT_INPUT;
+        passItem.textGetter = [&s]() -> const String& {
+            static const String empty;
+            size_t slot = selectedWiFiSlot(s);
+            return slot < s.wifiSTANetworks.size() ? s.wifiSTANetworks[slot].password : empty;
+        };
+        passItem.textSetter = [&s](const String& v) {
+            size_t slot = selectedWiFiSlot(s);
+            ensureWiFiSlot(s, slot);
+            if (slot >= s.wifiSTANetworks.size()) return false;
+            return UserConfig::trySetString(s.wifiSTANetworks[slot].password, v.c_str(), v.length());
+        };
+        passItem.maxTextLen = 64;
+        _items.push_back(passItem);
+        _items.back().id = SettingId::WiFiPassword;
+        idx++;
+    }
+    {
+        SettingItem forgetItem;
+        forgetItem.label = "Forget Network";
+        forgetItem.type = SettingType::ACTION;
+        forgetItem.formatter = [&s](int) {
+            String ssid = selectedWiFiSSID(s);
+            return ssid.isEmpty() ? String("Empty") : String("[Enter]");
+        };
+        forgetItem.action = [this, &s]() {
+            size_t slot = selectedWiFiSlot(s);
+            if (slot >= s.wifiSTANetworks.size() || s.wifiSTANetworks[slot].ssid.isEmpty()) {
+                if (_ui) _ui->lvStatusBar().showToast("WiFi profile already empty", 1200);
+                return;
+            }
+            s.wifiSTANetworks[slot].ssid = "";
+            s.wifiSTANetworks[slot].password = "";
+            applyAndSave();
+        };
+        _items.push_back(forgetItem);
+        _items.back().id = SettingId::WiFiForget;
+        idx++;
+    }
+    _items.push_back({"LAN Discovery", SettingType::TOGGLE,
+        [&s]() { return s.autoIfaceEnabled ? 1 : 0; },
+        [&s](int v) { s.autoIfaceEnabled = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::LanDiscovery;
+    idx++;
+    {
+        SettingItem tcpPreset;
+        tcpPreset.label = "TCP Server";
+        tcpPreset.type = SettingType::ENUM_CHOICE;
+        tcpPreset.getter = [&s]() {
+            const int target = selectedTcpEndpoint(s);
+            if (target < 0 || !s.tcpConnections[target].autoConnect) return 0;
+            return s.tcpConnections[target].host == RATSPEAK_HUB_HOST ? 1 : 2;
+        };
+        tcpPreset.setter = [&s](int v) {
+            if (v == 0) {
+                for (auto& ep : s.tcpConnections) ep.autoConnect = false;
+            } else if (v == 1) {
+                TCPEndpoint ep;
+                if (!UserConfig::trySetString(ep.host, RATSPEAK_HUB_HOST, sizeof(RATSPEAK_HUB_HOST) - 1)) throw std::bad_alloc();
+                ep.port = TCP_DEFAULT_PORT; ep.autoConnect = true;
+                std::vector<TCPEndpoint> prepared;
+                prepared.push_back(std::move(ep));
+                s.tcpConnections.swap(prepared);
+            } else if (v == 2) {
+                const int target = customTcpEndpoint(s);
+                if (target < 0) return; // The editor asks for Host before any save.
+                s.tcpConnections[target].autoConnect = true;
+                // Make the explicit choice the first active endpoint. Move only;
+                // keep all unrelated endpoints, ports and enabled flags intact.
+                std::rotate(s.tcpConnections.begin(), s.tcpConnections.begin() + target,
+                            s.tcpConnections.begin() + target + 1);
+            }
+        };
+        tcpPreset.minVal = 0; tcpPreset.maxVal = 2; tcpPreset.step = 1;
+        tcpPreset.enumLabels = {"None", "Ratspeak Hub", "Custom"};
+        _items.push_back(tcpPreset);
+        _items.back().id = SettingId::TcpServer;
+        idx++;
+    }
+    {
+        SettingItem tcpHost;
+        tcpHost.label = "Host";
+        tcpHost.type = SettingType::TEXT_INPUT;
+        tcpHost.textGetter = [&s]() -> const String& {
+            static const String empty;
+            const int target = selectedTcpEndpoint(s);
+            return target < 0 ? empty : s.tcpConnections[target].host;
+        };
+        tcpHost.textSetter = [&s](const String& v) {
+            if (!hasTcpHost(v)) return false;
+            String host;
+            if (!UserConfig::trySetString(host, v.c_str(), v.length())) return false;
+            host.trim();
+            const int target = selectedTcpEndpoint(s);
+            if (target < 0) {
+                if (s.tcpConnections.size() >= MAX_TCP_CONNECTIONS) return false;
+                TCPEndpoint endpoint;
+                endpoint.host = std::move(host);
+                endpoint.port = TCP_DEFAULT_PORT; endpoint.autoConnect = true;
+                s.tcpConnections.push_back(std::move(endpoint));
+            } else {
+                s.tcpConnections[target].host = std::move(host);
+                s.tcpConnections[target].autoConnect = true;
+            }
+            return true;
+        };
+        tcpHost.maxTextLen = 40;
+        _items.push_back(tcpHost);
+        _items.back().id = SettingId::TcpHost;
+        idx++;
+    }
+    _items.push_back({"Port", SettingType::INTEGER,
+        [&s]() { const int target = selectedTcpEndpoint(s); return target < 0 ? TCP_DEFAULT_PORT : int(s.tcpConnections[target].port); },
+        [&s](int v) {
+            const int target = selectedTcpEndpoint(s);
+            if (target < 0 || v < 1 || v > 65535) return;
+            s.tcpConnections[target].port = uint16_t(v);
+            s.tcpConnections[target].autoConnect = true;
+        },
+        [](int v) { return String(v); }, 1, 65535, 1});
+    _items.back().id = SettingId::TcpPort;
+    idx++;
+    _categories.push_back({"Wi-Fi & TCP", netStart, idx - netStart,
+        [this, &s]() {
+            if (interfaceSettingsChanged() || tcpSettingsChanged()) return String("Saved - reboot to apply");
+            String summary = wifiModeLabel(s.wifiMode);
+            if (s.wifiMode == RAT_WIFI_STA) {
+                String ssid = selectedWiFiSSID(s);
+                summary += ": ";
+                summary += ssid.isEmpty() ? String("No profile") : ssid;
+            }
+            if (!s.tcpConnections.empty()) summary += " + TCP";
+            if (s.autoIfaceEnabled) summary += " + LAN";
+            return summary;
+        }});
+    _categories.back().id = SettingsCategoryId::Network;
+
+    buildPropagationItems(idx);
+    buildVoiceItems(idx);
+
+    // Identity
     int devStart = idx;
-    _items.push_back({"Firmware", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String(RSDECK_VERSION_STRING)
-#ifdef BOARD_BETA_LABEL
-            + " / " BOARD_BETA_LABEL
-#endif
-            ; }});
-    idx++;
-#if defined(HAS_RNODE_MODE) && !HAS_RNODE_MODE
-    _items.push_back({"RNode", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String("Coming soon"); }});
-    idx++;
-#endif
-    _items.push_back({"LXMF Address", SettingType::READONLY, nullptr, nullptr,
-        [this](int) { return _destinationHash.length() > 0 ? _destinationHash : String("unknown"); }});
-    idx++;
-    _items.push_back({"Identity Hash", SettingType::READONLY, nullptr, nullptr,
-        [this](int) { return _identityHash; }});
-    idx++;
     {
         SettingItem nameItem;
         nameItem.label = "Display Name";
@@ -371,6 +689,44 @@ void LvSettingsScreen::buildItems() {
         };
         nameItem.maxTextLen = 16;
         _items.push_back(nameItem);
+        _items.back().id = SettingId::DisplayName;
+        idx++;
+    }
+    _items.push_back({"LXMF Address", SettingType::READONLY, nullptr, nullptr,
+        [this](int) { return _destinationHash.length() > 0 ? _destinationHash : String("unknown"); }});
+    _items.back().id = SettingId::LxmfAddress;
+    idx++;
+    {
+        SettingItem showQrItem;
+        showQrItem.label = "Show QR Code";
+        showQrItem.type = SettingType::ACTION;
+        showQrItem.formatter = [](int) { return String("[Enter]"); };
+        showQrItem.action = [this]() {
+            if (_showQrCb) _showQrCb();
+            else if (_ui) _ui->lvStatusBar().showToast("QR not available");
+        };
+        _items.push_back(showQrItem);
+        _items.back().id = SettingId::ShowQr;
+        idx++;
+    }
+    _items.push_back({"Auto Announce", SettingType::INTEGER,
+        [&s]() { return s.announceInterval; }, [&s](int v) { s.announceInterval = v; },
+        [](int v) { return v == 0 ? String("OFF") : String(v) + "m"; },
+        handheld::announce::MinimumMinutes, handheld::announce::MaximumMinutes,
+        handheld::announce::StepMinutes});
+    _items.back().allowOff = true;
+    _items.back().id = SettingId::AutoAnnounce;
+    idx++;
+    {
+        SettingItem announceItem;
+        announceItem.label = "Send Announce";
+        announceItem.type = SettingType::ACTION;
+        announceItem.formatter = [](int) { return String("[Enter]"); };
+        announceItem.action = [this]() {
+            if (_service) _service->action(handheld::Operation::Announce);
+        };
+        _items.push_back(announceItem);
+        _items.back().id = SettingId::SendAnnounce;
         idx++;
     }
     if (_service && !_service->identities().empty()) {
@@ -399,6 +755,7 @@ void LvSettingsScreen::buildItems() {
             idSwitch.enumLabels.push_back(labelBufs[i]);
         }
         _items.push_back(idSwitch);
+        _items.back().id = SettingId::IdentitySlot;
         idx++;
     }
     {
@@ -410,6 +767,7 @@ void LvSettingsScreen::buildItems() {
             if (_service) _service->action(handheld::Operation::CreateIdentity);
         };
         _items.push_back(newId);
+        _items.back().id = SettingId::CreateIdentity;
         idx++;
     }
     if (_service && _service->status().sd) {
@@ -421,27 +779,27 @@ void LvSettingsScreen::buildItems() {
             if (_service) _service->action(handheld::Operation::ImportIdentity);
         };
         _items.push_back(importId);
+        _items.back().id = SettingId::ImportIdentity;
         idx++;
     }
-    _items.push_back({"Auto Announce", SettingType::INTEGER,
-        [&s]() { return s.announceInterval; }, [&s](int v) { s.announceInterval = v; },
-        [](int v) { return v == 0 ? String("OFF") : String(v) + "m"; },
-        handheld::announce::MinimumMinutes, handheld::announce::MaximumMinutes,
-        handheld::announce::StepMinutes});
-    _items.back().allowOff = true;
+    _items.push_back({"Identity Hash", SettingType::READONLY, nullptr, nullptr,
+        [this](int) { return _identityHash; }});
+    _items.back().id = SettingId::IdentityHash;
     idx++;
-    _categories.push_back({"Identity & Device", devStart, idx - devStart,
+    _categories.push_back({"Identity", devStart, idx - devStart,
         [&s]() -> String {
             String name = s.displayName.isEmpty() ? String("Unnamed device") : s.displayName;
             if (s.devMode) name += " / Dev Enabled";
             return name;
         }});
+    _categories.back().id = SettingsCategoryId::Identity;
 
     // Screen & Input
     int dispStart = idx;
     _items.push_back({"Screen Brightness", SettingType::INTEGER,
         [&s]() { return s.brightness; }, [&s](int v) { s.brightness = v; },
         [](int v) { return String(v) + "%"; }, 1, 100, 5});
+    _items.back().id = SettingId::ScreenBrightness;
     idx++;
     {
         SettingItem themeItem;
@@ -452,30 +810,36 @@ void LvSettingsScreen::buildItems() {
         themeItem.minVal = 0; themeItem.maxVal = 1; themeItem.step = 1;
         themeItem.enumLabels = {"Dark", "Light"};
         _items.push_back(themeItem);
+        _items.back().id = SettingId::Theme;
         idx++;
     }
     _items.push_back({"Dim After", SettingType::INTEGER,
         [&s]() { return s.screenDimTimeout; }, [&s](int v) { s.screenDimTimeout = v; },
         [](int v) { return String(v) + "s"; }, 5, 3600, 5});
+    _items.back().id = SettingId::DimAfter;
     idx++;
     _items.push_back({"Display Off After", SettingType::INTEGER,
         [&s]() { return s.screenOffTimeout; }, [&s](int v) { s.screenOffTimeout = v; },
         [](int v) { return String(v) + "s"; }, 10, 7200, 10});
+    _items.back().id = SettingId::DisplayOffAfter;
     idx++;
     _items.push_back({"Key Backlight", SettingType::ENUM_CHOICE,
         [&s]() { return keyboardBacklightChoice(s.keyboardBrightness); },
         [&s](int v) { s.keyboardBrightness = keyboardBacklightPercent(v); },
         nullptr, 0, 2, 1, {"OFF", "LOW", "HIGH"}, {}, {}, {}});
+    _items.back().id = SettingId::KeyBacklight;
     idx++;
     _items.push_back({"Keys Wake Light", SettingType::TOGGLE,
         [&s]() { return s.keyboardAutoOn ? 1 : 0; },
         [&s](int v) { s.keyboardAutoOn = (v != 0); },
         [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::KeysWakeLight;
     idx++;
     _items.push_back({"Keys Auto-Off", SettingType::TOGGLE,
         [&s]() { return s.keyboardAutoOff ? 1 : 0; },
         [&s](int v) { s.keyboardAutoOff = (v != 0); },
         [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::KeysAutoOff;
     idx++;
 #if HAS_TRACKBALL || HAS_SCROLLWHEEL
     // Same persisted field/JSON key on all boards; label follows the pointer device
@@ -486,6 +850,7 @@ void LvSettingsScreen::buildItems() {
 #endif
         [&s]() { return s.trackballSpeed; }, [&s](int v) { s.trackballSpeed = v; },
         [](int v) { return String(v); }, 1, 5, 1});
+    _items.back().id = SettingId::PointerSpeed;
     idx++;
 #endif
     // Input help is reachable with the physical pointer and Enter on boards
@@ -497,15 +862,79 @@ void LvSettingsScreen::buildItems() {
         helpItem.formatter = [](int) { return String("[Enter]"); };
         helpItem.action = [this]() { if (_showHelpCb) _showHelpCb(); };
         _items.push_back(helpItem);
+        _items.back().id = SettingId::InputHelp;
         idx++;
     }
-    _categories.push_back({"Screen & Input", dispStart, idx - dispStart,
+    _categories.push_back({"Display & Input", dispStart, idx - dispStart,
         [&s]() -> String {
             String summary = String("Screen ") + String(s.brightness);
             summary += "% / Keys ";
             summary += keyboardBacklightLabel(s.keyboardBrightness);
             return summary;
         }});
+    _categories.back().id = SettingsCategoryId::Display;
+
+    // Alerts & Audio
+    int audioStart = idx;
+    _items.push_back({"Audio Alerts", SettingType::TOGGLE,
+        [&s]() { return s.audioEnabled ? 1 : 0; },
+        [&s](int v) { s.audioEnabled = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::AudioAlerts;
+    idx++;
+    _items.push_back({"Volume", SettingType::INTEGER,
+        [&s]() { return s.audioVolume; }, [&s](int v) { s.audioVolume = v; },
+        [](int v) { return String(v) + "%"; }, 0, 100, 10});
+    _items.back().id = SettingId::AlertVolume;
+    idx++;
+    _categories.push_back({"Alerts", audioStart, idx - audioStart,
+        [&s]() -> String {
+            if (!s.audioEnabled) return String("Muted");
+            String summary = String("Volume ") + String(s.audioVolume);
+            summary += "%";
+            return summary;
+        }});
+    _categories.back().id = SettingsCategoryId::Alerts;
+
+    // Time & Location
+    int gpsStart = idx;
+#if HAS_GPS
+    _items.push_back({"GPS Time Sync", SettingType::TOGGLE,
+        [&s]() { return s.gpsTimeEnabled ? 1 : 0; },
+        [&s](int v) { s.gpsTimeEnabled = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::GpsTimeSync;
+    idx++;
+    _items.push_back({"GPS Location", SettingType::TOGGLE,
+        [&s]() { return s.gpsLocationEnabled ? 1 : 0; },
+        [&s](int v) { s.gpsLocationEnabled = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::GpsLocation;
+    idx++;
+#endif
+    _items.push_back({"Timezone", SettingType::INTEGER,
+        [&s]() { return (int)s.timezoneIdx; },
+        [&s](int v) { s.timezoneIdx = (uint8_t)v; s.timezoneSet = true; },
+        [](int v) {
+            if (v >= 0 && v < TIMEZONE_COUNT) return String(TIMEZONE_TABLE[v].label);
+            return String("Unknown");
+        },
+        0, TIMEZONE_COUNT - 1, 1});
+    _items.back().id = SettingId::Timezone;
+    idx++;
+    _items.push_back({"24-Hour Clock", SettingType::TOGGLE,
+        [&s]() { return s.use24HourTime ? 1 : 0; },
+        [&s](int v) { s.use24HourTime = (v != 0); },
+        [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::Clock24Hour;
+    idx++;
+    _categories.push_back({"Time & Location", gpsStart, idx - gpsStart,
+        [&s]() {
+            if (s.timezoneIdx < TIMEZONE_COUNT)
+                return String(TIMEZONE_TABLE[s.timezoneIdx].label);
+            return String("Not set");
+        }});
+    _categories.back().id = SettingsCategoryId::TimeLocation;
 
     // Both boards choose status-bar presentation. Only ADC-model boards expose
     // discharge calibration; a fuel gauge already supplies its own estimate.
@@ -514,6 +943,7 @@ void LvSettingsScreen::buildItems() {
         [&s]() { return (int)s.batteryDisplay; },
         [&s](int v) { s.batteryDisplay = (uint8_t)v; },
         nullptr, BATTERY_DISPLAY_PERCENT, BATTERY_DISPLAY_BAR, 1, {"Percent", "Bar"}});
+    _items.back().id = SettingId::BatteryDisplay;
     idx++;
 
     _items.push_back({"Estimated Charge", SettingType::READONLY, nullptr, nullptr,
@@ -521,6 +951,7 @@ void LvSettingsScreen::buildItems() {
             if (!_power) return String("--");
             return String(_power->batteryPercent()) + "%";
         }});
+    _items.back().id = SettingId::EstimatedCharge;
     idx++;
 
 #if HAS_BATTERY_MODEL
@@ -529,6 +960,7 @@ void LvSettingsScreen::buildItems() {
             [&s]() { return (int)s.batteryModel; },
             [&s](int v) { s.batteryModel = (uint8_t)v; },
             nullptr, BATTERY_MODEL_LIPO, BATTERY_MODEL_LINEAR, 1, {"LiPo / Li-Ion", "Linear"}});
+        _items.back().id = SettingId::DischargeCurve;
         idx++;
 
         _items.push_back({"Charge Above", SettingType::INTEGER,
@@ -537,6 +969,7 @@ void LvSettingsScreen::buildItems() {
             [](int v) -> String {
                 char buf[8]; snprintf(buf, sizeof(buf), "%.2fV", v / 100.0f); return String(buf);
             }, 380, 430, 1});
+        _items.back().id = SettingId::ChargeAbove;
         idx++;
         _items.push_back({"Full Voltage", SettingType::INTEGER,
             [&s]() { return (int)roundf(s.fullBatteryV * 100); },
@@ -544,6 +977,7 @@ void LvSettingsScreen::buildItems() {
             [](int v) -> String {
                 char buf[8]; snprintf(buf, sizeof(buf), "%.2fV", v / 100.0f); return String(buf);
             }, 350, 420, 1});
+        _items.back().id = SettingId::FullVoltage;
         idx++;
 
         _items.push_back({"Voltage", SettingType::READONLY, nullptr, nullptr,
@@ -553,6 +987,7 @@ void LvSettingsScreen::buildItems() {
                 snprintf(buf, sizeof(buf), "%.2fV", _power->batteryVoltage());
                 return String(buf);
             }});
+        _items.back().id = SettingId::Voltage;
         idx++;
     }
 
@@ -568,408 +1003,10 @@ void LvSettingsScreen::buildItems() {
             }
             return summary;
         }});
+    _categories.back().id = SettingsCategoryId::Battery;
 
-    // LoRa link
-    int radioStart = idx;
-    _items.push_back({"LoRa Radio", SettingType::TOGGLE,
-        [&s]() { return s.loraEnabled ? 1 : 0; },
-        [&s](int v) { s.loraEnabled = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-    {
-        // Explicitly choosing a region restores its default frequency.
-        SettingItem regionItem;
-        regionItem.label = "Region Preset";
-        regionItem.type = SettingType::ENUM_CHOICE;
-        regionItem.getter = [&s]() {
-            int region = constrain(s.radioRegion, 0, REGION_COUNT - 1);
-            return s.loraFrequency == REGION_FREQ[region] ? region : (int)REGION_COUNT;
-        };
-        regionItem.setter = [&s](int v) {
-            if (v < 0 || v >= REGION_COUNT) return; // Keep the displayed Custom value.
-            s.radioRegion = v;
-            s.loraFrequency = REGION_FREQ[v];
-        };
-        regionItem.minVal = 0; regionItem.maxVal = REGION_COUNT - 1; regionItem.step = 1;
-        regionItem.enumLabels = {REGION_LABELS[0], REGION_LABELS[1], REGION_LABELS[2], REGION_LABELS[3], "Custom"};
-        _items.push_back(regionItem);
-        idx++;
-
-        SettingItem presetItem;
-        presetItem.label = "Link Preset";
-        presetItem.type = SettingType::ENUM_CHOICE;
-        presetItem.getter = [this]() { int p = detectPreset(); return (p >= 0) ? p : RadioPresets::count; };
-        presetItem.setter = [this](int v) { if (v >= 0 && v < RadioPresets::count) applyPreset(v); };
-        presetItem.minVal = 0; presetItem.maxVal = RadioPresets::count - 1; presetItem.step = 1;
-        presetItem.enumLabels = {};
-        for (int i = 0; i < RadioPresets::count; i++)
-            presetItem.enumLabels.push_back(RadioPresets::values[i].name);
-        presetItem.enumLabels.push_back("Custom");
-        _items.push_back(presetItem);
-        idx++;
-    }
-    {
-        SettingItem devModeItem;
-        devModeItem.label = "Developer Radio Controls";
-        devModeItem.type = SettingType::ACTION;
-        devModeItem.formatter = [this, &s](int) {
-            if (_confirmingDevMode) return String("Hold");
-            return s.devMode ? String("Unlocked") : String("Locked");
-        };
-        devModeItem.action = [this, &s]() {
-            if (s.devMode) {
-                s.devMode = false;
-                _confirmingDevMode = false;
-                clearConfirmations();
-                applyAndSave();
-                buildItems();
-                enterCategory(_categoryIdx);
-                return;
-            }
-            if (!_confirmingDevMode) {
-                clearConfirmations();
-                _confirmingDevMode = true;
-                if (_ui) _ui->lvStatusBar().showToast("RF controls armed. Hold to unlock", 5000);
-                rebuildItemList();
-                return;
-            }
-            if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to unlock RF controls", 2500);
-        };
-        _items.push_back(devModeItem);
-        idx++;
-    }
-    // Custom radio parameters - only visible in Developer Mode
-    if (s.devMode) {
-        _items.push_back({"Frequency", SettingType::INTEGER,
-            [&s]() { return (int)(s.loraFrequency); },
-            [&s](int v) { s.loraFrequency = (uint32_t)v; },
-            [](int v) { return formatRadioFrequency(v); },
-            LORA_MIN_FREQUENCY, LORA_MAX_FREQUENCY, 125000});
-        idx++;
-        _items.push_back({"TX Power", SettingType::INTEGER,
-            [&s]() { return s.loraTxPower; }, [&s](int v) { s.loraTxPower = v; },
-            [](int v) { return String(v) + " dBm"; }, -9, 22, 1});
-        idx++;
-        _items.push_back({"Spread Factor", SettingType::INTEGER,
-            [&s]() { return s.loraSF; }, [&s](int v) { s.loraSF = v; },
-            [](int v) { return String("SF") + String(v); }, 5, 12, 1});
-        idx++;
-        _items.push_back({"Bandwidth", SettingType::ENUM_CHOICE,
-            [&s]() { return RadioBandwidth::index(s.loraBW); },
-            [&s](int v) { s.loraBW = RadioBandwidth::values[constrain(v, 0, RadioBandwidth::count - 1)].hz; },
-            nullptr, 0, RadioBandwidth::count - 1, 1,
-            {"7.8k", "10.4k", "15.6k", "20.8k", "31.25k", "41.7k", "62.5k", "125k", "250k", "500k"}});
-        idx++;
-        _items.push_back({"Coding Rate", SettingType::INTEGER,
-            [&s]() { return s.loraCR; }, [&s](int v) { s.loraCR = v; },
-            [](int v) { return String("4/") + String(v); }, 5, 8, 1});
-        idx++;
-        _items.push_back({"Preamble", SettingType::INTEGER,
-            [&s]() { return (int)s.loraPreamble; }, [&s](int v) { s.loraPreamble = v; },
-            [](int v) { return String(v); }, 6, 65, 1});
-        idx++;
-    }
-    _categories.push_back({"LoRa", radioStart, idx - radioStart,
-        [this]() {
-            if (loraSettingsChanged()) {
-                return String("Saved - reboot to apply");
-            }
-            int p = detectPreset();
-            auto& s = _cfg->settings();
-            if (!s.loraEnabled) return String("Off");
-            String label = (p >= 0) ? String(RadioPresets::values[p].name) : String("Custom");
-            label += " ";
-            label += formatRadioFrequency(s.loraFrequency);
-            if (s.devMode) label += " / Dev";
-            return label;
-        }});
-
-    // Network
-    int netStart = idx;
-    _items.push_back({"WiFi Mode", SettingType::ENUM_CHOICE,
-        [&s]() { return (int)s.wifiMode; },
-        [&s](int v) {
-            s.wifiMode = (RatWiFiMode)v;
-            if (s.wifiMode != RAT_WIFI_OFF) s.wifiRestoreMode = s.wifiMode;
-        },
-        nullptr, 0, 2, 1, {"Off", "Hotspot", "Client"}});
-    idx++;
-    {
-        SettingItem scanItem;
-        scanItem.label = "Scan Networks";
-        scanItem.type = SettingType::ACTION;
-        scanItem.formatter = [](int) { return String("[Enter]"); };
-        scanItem.action = [this, &s]() {
-            _wifiTargetSlot = selectedWiFiSlot(s);
-            showWifiPicker();
-        };
-        _items.push_back(scanItem);
-        idx++;
-    }
-    _items.push_back({"WiFi Profile", SettingType::INTEGER,
-        [&s]() { return (int)selectedWiFiSlot(s) + 1; },
-        [&s](int v) { s.wifiSTASelected = (uint8_t)constrain(v - 1, 0, (int)WIFI_STA_MAX_NETWORKS - 1); },
-        [&s](int v) { return wifiProfileValue(s, constrain(v - 1, 0, (int)WIFI_STA_MAX_NETWORKS - 1)); },
-        1, (int)WIFI_STA_MAX_NETWORKS, 1});
-    idx++;
-    {
-        SettingItem ssidItem;
-        ssidItem.label = "WiFi SSID";
-        ssidItem.type = SettingType::TEXT_INPUT;
-        ssidItem.textGetter = [&s]() -> const String& {
-            static const String empty;
-            size_t slot = selectedWiFiSlot(s);
-            return slot < s.wifiSTANetworks.size() ? s.wifiSTANetworks[slot].ssid : empty;
-        };
-        ssidItem.textSetter = [&s](const String& v) {
-            size_t slot = selectedWiFiSlot(s);
-            ensureWiFiSlot(s, slot);
-            if (slot >= s.wifiSTANetworks.size()) return false;
-            const bool changed = s.wifiSTANetworks[slot].ssid != v;
-            if (!UserConfig::trySetString(s.wifiSTANetworks[slot].ssid, v.c_str(), v.length())) return false;
-            if (changed || v.isEmpty()) s.wifiSTANetworks[slot].password = "";
-            return true;
-        };
-        ssidItem.maxTextLen = 32;
-        _items.push_back(ssidItem);
-        idx++;
-    }
-    {
-        SettingItem passItem;
-        passItem.label = "WiFi Password";
-        passItem.type = SettingType::TEXT_INPUT;
-        passItem.textGetter = [&s]() -> const String& {
-            static const String empty;
-            size_t slot = selectedWiFiSlot(s);
-            return slot < s.wifiSTANetworks.size() ? s.wifiSTANetworks[slot].password : empty;
-        };
-        passItem.textSetter = [&s](const String& v) {
-            size_t slot = selectedWiFiSlot(s);
-            ensureWiFiSlot(s, slot);
-            if (slot >= s.wifiSTANetworks.size()) return false;
-            return UserConfig::trySetString(s.wifiSTANetworks[slot].password, v.c_str(), v.length());
-        };
-        passItem.maxTextLen = 64;
-        _items.push_back(passItem);
-        idx++;
-    }
-    {
-        SettingItem forgetItem;
-        forgetItem.label = "Forget Network";
-        forgetItem.type = SettingType::ACTION;
-        forgetItem.formatter = [&s](int) {
-            String ssid = selectedWiFiSSID(s);
-            return ssid.isEmpty() ? String("Empty") : String("[Enter]");
-        };
-        forgetItem.action = [this, &s]() {
-            size_t slot = selectedWiFiSlot(s);
-            if (slot >= s.wifiSTANetworks.size() || s.wifiSTANetworks[slot].ssid.isEmpty()) {
-                if (_ui) _ui->lvStatusBar().showToast("WiFi profile already empty", 1200);
-                return;
-            }
-            s.wifiSTANetworks[slot].ssid = "";
-            s.wifiSTANetworks[slot].password = "";
-            applyAndSave();
-        };
-        _items.push_back(forgetItem);
-        idx++;
-    }
-    {
-        SettingItem tcpPreset;
-        tcpPreset.label = "TCP Server";
-        tcpPreset.type = SettingType::ENUM_CHOICE;
-        tcpPreset.getter = [&s]() {
-            for (auto& ep : s.tcpConnections) {
-                if (!ep.autoConnect || ep.host.isEmpty()) continue;
-                if (ep.host == RATSPEAK_HUB_HOST) return 1;
-                return 2;
-            }
-            return 0;
-        };
-        tcpPreset.setter = [&s](int v) {
-            if (v == 0) {
-                for (auto& ep : s.tcpConnections) ep.autoConnect = false;
-            }
-            else if (v == 1) {
-                TCPEndpoint ep;
-                if (!UserConfig::trySetString(ep.host, RATSPEAK_HUB_HOST, sizeof(RATSPEAK_HUB_HOST) - 1)) throw std::bad_alloc();
-                ep.port = TCP_DEFAULT_PORT; ep.autoConnect = true;
-                std::vector<TCPEndpoint> prepared;
-                prepared.push_back(std::move(ep));
-                s.tcpConnections.swap(prepared);
-            } else if (v == 2 && s.tcpConnections.empty()) {
-                TCPEndpoint ep; ep.port = TCP_DEFAULT_PORT; ep.autoConnect = false;
-                s.tcpConnections.push_back(std::move(ep));
-            }
-        };
-        tcpPreset.minVal = 0; tcpPreset.maxVal = 2; tcpPreset.step = 1;
-        tcpPreset.enumLabels = {"None", "Ratspeak Hub", "Custom"};
-        _items.push_back(tcpPreset);
-        idx++;
-    }
-    {
-        SettingItem tcpHost;
-        tcpHost.label = "Host";
-        tcpHost.type = SettingType::TEXT_INPUT;
-        tcpHost.textGetter = [&s]() -> const String& {
-            static const String empty;
-            return s.tcpConnections.empty() ? empty : s.tcpConnections[0].host;
-        };
-        tcpHost.textSetter = [&s](const String& v) {
-            if (s.tcpConnections.empty()) {
-                TCPEndpoint ep;
-                if (!UserConfig::trySetString(ep.host, v.c_str(), v.length())) return false;
-                ep.port = TCP_DEFAULT_PORT; ep.autoConnect = true;
-                s.tcpConnections.push_back(std::move(ep));
-                return true;
-            }
-            return UserConfig::trySetString(s.tcpConnections[0].host, v.c_str(), v.length());
-        };
-        tcpHost.maxTextLen = 40;
-        _items.push_back(tcpHost);
-        idx++;
-    }
-    _items.push_back({"Port", SettingType::INTEGER,
-        [&s]() { return s.tcpConnections.empty() ? TCP_DEFAULT_PORT : (int)s.tcpConnections[0].port; },
-        [&s](int v) {
-            if (s.tcpConnections.empty()) {
-                TCPEndpoint ep; ep.port = v; ep.autoConnect = true;
-                s.tcpConnections.push_back(std::move(ep));
-            } else { s.tcpConnections[0].port = v; }
-        },
-        [](int v) { return String(v); }, 1, 65535, 1});
-    idx++;
-    _items.push_back({"LAN Discovery", SettingType::TOGGLE,
-        [&s]() { return s.autoIfaceEnabled ? 1 : 0; },
-        [&s](int v) { s.autoIfaceEnabled = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-    _categories.push_back({"Network", netStart, idx - netStart,
-        [this, &s]() {
-            if (interfaceSettingsChanged() || tcpSettingsChanged()) return String("Saved - reboot to apply");
-            String summary = wifiModeLabel(s.wifiMode);
-            if (s.wifiMode == RAT_WIFI_STA) {
-                String ssid = selectedWiFiSSID(s);
-                summary += ": ";
-                summary += ssid.isEmpty() ? String("No profile") : ssid;
-            }
-            if (!s.tcpConnections.empty()) summary += " + TCP";
-            if (s.autoIfaceEnabled) summary += " + LAN";
-            return summary;
-        }});
-
-    // Time & Location
-    int gpsStart = idx;
-#if HAS_GPS
-    _items.push_back({"GPS Time Sync", SettingType::TOGGLE,
-        [&s]() { return s.gpsTimeEnabled ? 1 : 0; },
-        [&s](int v) { s.gpsTimeEnabled = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-    _items.push_back({"GPS Location", SettingType::TOGGLE,
-        [&s]() { return s.gpsLocationEnabled ? 1 : 0; },
-        [&s](int v) { s.gpsLocationEnabled = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-#endif
-    _items.push_back({"Timezone", SettingType::INTEGER,
-        [&s]() { return (int)s.timezoneIdx; },
-        [&s](int v) { s.timezoneIdx = (uint8_t)v; s.timezoneSet = true; },
-        [](int v) {
-            if (v >= 0 && v < TIMEZONE_COUNT) return String(TIMEZONE_TABLE[v].label);
-            return String("Unknown");
-        },
-        0, TIMEZONE_COUNT - 1, 1});
-    idx++;
-    _items.push_back({"24-Hour Clock", SettingType::TOGGLE,
-        [&s]() { return s.use24HourTime ? 1 : 0; },
-        [&s](int v) { s.use24HourTime = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-    _categories.push_back({"Time & Location", gpsStart, idx - gpsStart,
-        [&s]() {
-            if (s.timezoneIdx < TIMEZONE_COUNT)
-                return String(TIMEZONE_TABLE[s.timezoneIdx].label);
-            return String("Not set");
-        }});
-
-    // Alerts & Audio
-    int audioStart = idx;
-    _items.push_back({"Audio Alerts", SettingType::TOGGLE,
-        [&s]() { return s.audioEnabled ? 1 : 0; },
-        [&s](int v) { s.audioEnabled = (v != 0); },
-        [](int v) { return String(onOff(v != 0)); }});
-    idx++;
-    _items.push_back({"Volume", SettingType::INTEGER,
-        [&s]() { return s.audioVolume; }, [&s](int v) { s.audioVolume = v; },
-        [](int v) { return String(v) + "%"; }, 0, 100, 10});
-    idx++;
-    _categories.push_back({"Alerts & Audio", audioStart, idx - audioStart,
-        [&s]() -> String {
-            if (!s.audioEnabled) return String("Muted");
-            String summary = String("Volume ") + String(s.audioVolume);
-            summary += "%";
-            return summary;
-        }});
-
-    // Diagnostics
-    int infoStart = idx;
-    _items.push_back({"RNS Transport", SettingType::READONLY, nullptr, nullptr,
-        [this](int) { return _backend && _backend->isTransportActive() ? String("ACTIVE") : String("OFFLINE"); }});
-    idx++;
-    _items.push_back({"Known Paths", SettingType::READONLY, nullptr, nullptr,
-        [this](int) { return _backend ? String((int)_backend->pathCount()) : String("0"); }});
-    idx++;
-    _items.push_back({"Live Links", SettingType::READONLY, nullptr, nullptr,
-        [this](int) { return _backend ? String((int)_backend->linkCount()) : String("0"); }});
-    idx++;
-    _items.push_back({"LoRa Driver", SettingType::READONLY, nullptr, nullptr,
-        [this](int) {
-            if (_service && _service->status().radio) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "SF%d BW%luk %ddBm",
-                    _service->status().sf,
-                    (unsigned long)(_service->status().bandwidth / 1000),
-                    _service->status().txPower);
-                return String(buf);
-            }
-            return String("OFFLINE");
-        }});
-    idx++;
-    _items.push_back({"Heap", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});
-    idx++;
-    _items.push_back({"PSRAM", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String((unsigned long)(ESP.getFreePsram() / 1024)) + " KB"; }});
-    idx++;
-    _items.push_back({"Uptime", SettingType::READONLY, nullptr, nullptr,
-        [](int) -> String {
-            unsigned long m = millis() / 60000;
-            if (m >= 60) {
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%luh %lum", m / 60, m % 60);
-                return String(buf);
-            }
-            return String(m) + "m";
-        }});
-    idx++;
-    _categories.push_back({"Diagnostics", infoStart, idx - infoStart,
-        [this]() -> String {
-            if (!_backend || !_backend->isTransportActive()) return String("Transport offline");
-            String summary = String("Paths ") + String((int)_backend->pathCount());
-            summary += " / Links ";
-            summary += String((int)_backend->linkCount());
-            return summary;
-        }});
-
-    // Storage & Maintenance
+    // Storage
     int sysStart = idx;
-    _items.push_back({"Free Heap", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});
-    idx++;
-    _items.push_back({"Free PSRAM", SettingType::READONLY, nullptr, nullptr,
-        [](int) { return String((unsigned long)(ESP.getFreePsram() / 1024)) + " KB"; }});
-    idx++;
     _items.push_back({"Flash", SettingType::READONLY, nullptr, nullptr,
         [this](int) {
             if (!_service || !_service->status().flash) return String("Error");
@@ -979,41 +1016,29 @@ void LvSettingsScreen::buildItems() {
                      (unsigned long)(_service->status().flashTotal / 1024));
             return String(buf);
         }});
+    _items.back().id = SettingId::Flash;
     idx++;
     _items.push_back({"SD Card", SettingType::READONLY, nullptr, nullptr,
         [this](int) { return _service && _service->status().sd ? String("Ready") : String("Not Found"); }});
+    _items.back().id = SettingId::SdCard;
     idx++;
     _items.push_back({"SD Message Store", SettingType::TOGGLE,
         [&s]() { return s.sdStorageEnabled ? 1 : 0; },
         [&s](int v) { s.sdStorageEnabled = (v != 0); },
         [](int v) { return String(onOff(v != 0)); }});
+    _items.back().id = SettingId::SdMessageStore;
+    idx++;
+    _items.push_back({"Free Heap", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});
+    _items.back().id = SettingId::FreeHeap;
+    idx++;
+    _items.push_back({"Free PSRAM", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String((unsigned long)(ESP.getFreePsram() / 1024)) + " KB"; }});
+    _items.back().id = SettingId::FreePsram;
     idx++;
     {
-        SettingItem announceItem;
-        announceItem.label = "Send Announce";
-        announceItem.type = SettingType::ACTION;
-        announceItem.formatter = [](int) { return String("[Enter]"); };
-        announceItem.action = [this]() {
-            if (_service) _service->action(handheld::Operation::Announce);
-        };
-        _items.push_back(announceItem);
-        idx++;
-    }
-    {
-        SettingItem showQrItem;
-        showQrItem.label = "Show QR Code";
-        showQrItem.type = SettingType::ACTION;
-        showQrItem.formatter = [](int) { return String("[Enter]"); };
-        showQrItem.action = [this]() {
-            if (_showQrCb) _showQrCb();
-            else if (_ui) _ui->lvStatusBar().showToast("QR not available");
-        };
-        _items.push_back(showQrItem);
-        idx++;
-    }
-    {
         SettingItem initSD;
-        initSD.label = "Format SD Card";
+        initSD.label = "Initialize & Restart";
         initSD.type = SettingType::ACTION;
         initSD.formatter = [this](int) {
             if (!_service || !_service->status().sd) return String("No Card");
@@ -1024,13 +1049,14 @@ void LvSettingsScreen::buildItems() {
             if (!_confirmingInitSD) {
                 clearConfirmations();
                 _confirmingInitSD = true;
-                if (_ui) _ui->lvStatusBar().showToast("Format SD armed. Hold to confirm", 5000);
+                if (_ui) _ui->lvStatusBar().showToast("Initialize SD armed. Hold to restart", 5000);
                 rebuildItemList();
                 return;
             }
-            if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to format SD", 2500);
+            if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to initialize SD and restart", 2500);
         };
         _items.push_back(initSD);
+        _items.back().id = SettingId::InitializeSd;
         idx++;
     }
     {
@@ -1053,6 +1079,132 @@ void LvSettingsScreen::buildItems() {
             if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to erase SD data", 2500);
         };
         _items.push_back(wipeSD);
+        _items.back().id = SettingId::EraseSd;
+        idx++;
+    }
+    _categories.push_back({"Storage", sysStart, idx - sysStart,
+        [this](){
+            if (_rebootNeeded) return String("Reboot pending");
+            return (_service && _service->status().sd) ? String("SD ready") : String("Flash only");
+        }});
+    _categories.back().id = SettingsCategoryId::Storage;
+    // Device
+    int infoStart = idx;
+    _items.push_back({"Firmware", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String(RSDECK_VERSION_STRING)
+#ifdef BOARD_BETA_LABEL
+            + " / " BOARD_BETA_LABEL
+#endif
+            ; }});
+    _items.back().id = SettingId::Firmware;
+    idx++;
+#if defined(HAS_RNODE_MODE) && !HAS_RNODE_MODE
+    _items.push_back({"RNode", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String("Coming soon"); }});
+    _items.back().id = SettingId::Rnode;
+    idx++;
+#endif
+    {
+        SettingItem updateCheck;
+        updateCheck.label = "Check Firmware";
+        updateCheck.type = SettingType::ACTION;
+        updateCheck.formatter = [this](int) {
+            return _fwCheckState == FirmwareCheckState::RUNNING ? String("Checking") : String("[Enter]");
+        };
+        updateCheck.action = [this]() {
+            startFirmwareCheck();
+            rebuildItemList();
+        };
+        _items.push_back(updateCheck);
+        _items.back().id = SettingId::CheckFirmware;
+        idx++;
+    }
+    _items.push_back({"RNS Transport", SettingType::READONLY, nullptr, nullptr,
+        [this](int) { return _backend && _backend->isTransportActive() ? String("ACTIVE") : String("OFFLINE"); }});
+    _items.back().id = SettingId::RnsTransport;
+    idx++;
+    _items.push_back({"Known Paths", SettingType::READONLY, nullptr, nullptr,
+        [this](int) { return _backend ? String((int)_backend->pathCount()) : String("0"); }});
+    _items.back().id = SettingId::KnownPaths;
+    idx++;
+    _items.push_back({"Live Links", SettingType::READONLY, nullptr, nullptr,
+        [this](int) { return _backend ? String((int)_backend->linkCount()) : String("0"); }});
+    _items.back().id = SettingId::LiveLinks;
+    idx++;
+    _items.push_back({"LoRa Driver", SettingType::READONLY, nullptr, nullptr,
+        [this](int) {
+            if (_service && _service->status().radio) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "SF%d BW%luk %ddBm",
+                    _service->status().sf,
+                    (unsigned long)(_service->status().bandwidth / 1000),
+                    _service->status().txPower);
+                return String(buf);
+            }
+            return String("OFFLINE");
+        }});
+    _items.back().id = SettingId::LoRaDriver;
+    idx++;
+    _items.push_back({"Heap", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});
+    _items.back().id = SettingId::Heap;
+    idx++;
+    _items.push_back({"PSRAM", SettingType::READONLY, nullptr, nullptr,
+        [](int) { return String((unsigned long)(ESP.getFreePsram() / 1024)) + " KB"; }});
+    _items.back().id = SettingId::Psram;
+    idx++;
+    _items.push_back({"Uptime", SettingType::READONLY, nullptr, nullptr,
+        [](int) -> String {
+            unsigned long m = millis() / 60000;
+            if (m >= 60) {
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%luh %lum", m / 60, m % 60);
+                return String(buf);
+            }
+            return String(m) + "m";
+        }});
+    _items.back().id = SettingId::Uptime;
+    idx++;
+    {
+        SettingItem devModeItem;
+        devModeItem.label = "Developer Radio Controls";
+        devModeItem.type = SettingType::ACTION;
+        devModeItem.formatter = [this, &s](int) {
+            if (_confirmingDevMode) return String("Hold");
+            return s.devMode ? String("Unlocked") : String("Locked");
+        };
+        devModeItem.action = [this, &s]() {
+            if (s.devMode) {
+                s.devMode = false;
+                _confirmingDevMode = false;
+                clearConfirmations();
+                _itemsNeedRebuild = true;
+                applyAndSave(true);
+                return;
+            }
+            if (!_confirmingDevMode) {
+                clearConfirmations();
+                _confirmingDevMode = true;
+                if (_ui) _ui->lvStatusBar().showToast("RF controls armed. Hold to unlock", 5000);
+                rebuildItemList();
+                return;
+            }
+            if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to unlock RF controls", 2500);
+        };
+        _items.push_back(devModeItem);
+        _items.back().id = SettingId::DeveloperControls;
+        idx++;
+    }
+    {
+        SettingItem rebootItem;
+        rebootItem.label = "Reboot Now";
+        rebootItem.type = SettingType::ACTION;
+        rebootItem.formatter = [](int) { return String("[Enter]"); };
+        rebootItem.action = [this]() {
+            if (_service) _service->lifecycle(handheld::Operation::Restart);
+        };
+        _items.push_back(rebootItem);
+        _items.back().id = SettingId::Reboot;
         idx++;
     }
     {
@@ -1071,40 +1223,30 @@ void LvSettingsScreen::buildItems() {
             if (_ui) _ui->lvStatusBar().showToast("Hold " BOARD_CONFIRM_INPUT_NAME " to erase device", 2500);
         };
         _items.push_back(factoryReset);
+        _items.back().id = SettingId::EraseDevice;
         idx++;
     }
-    {
-        SettingItem rebootItem;
-        rebootItem.label = "Reboot Now";
-        rebootItem.type = SettingType::ACTION;
-        rebootItem.formatter = [](int) { return String("[Enter]"); };
-        rebootItem.action = [this]() {
-            if (_service) _service->lifecycle(handheld::Operation::Restart);
-        };
-        _items.push_back(rebootItem);
-        idx++;
-    }
-    {
-        SettingItem updateCheck;
-        updateCheck.label = "Check Firmware";
-        updateCheck.type = SettingType::ACTION;
-        updateCheck.formatter = [this](int) {
-            return _fwCheckState == FirmwareCheckState::RUNNING ? String("Checking") : String("[Enter]");
-        };
-        updateCheck.action = [this]() {
-            startFirmwareCheck();
-            rebuildItemList();
-        };
-        _items.push_back(updateCheck);
-        idx++;
-    }
-    _categories.push_back({"Storage & Maintenance", sysStart, idx - sysStart,
-        [this](){
-            if (_rebootNeeded) return String("Reboot pending");
-            return (_service && _service->status().sd) ? String("SD ready") : String("Flash only");
+    _categories.push_back({"Device", infoStart, idx - infoStart,
+        [this]() -> String {
+            if (!_backend || !_backend->isTransportActive()) return String("Transport offline");
+            String summary = String("Paths ") + String((int)_backend->pathCount());
+            summary += " / Links ";
+            summary += String((int)_backend->linkCount());
+            return summary;
         }});
-    buildPropagationItems(idx);
-    buildVoiceItems(idx);
+    _categories.back().id = SettingsCategoryId::Device;
+
+    for (int i = 0; i < int(_categories.size()); ++i) {
+        if (_categories[i].id == category) { _categoryIdx = i; break; }
+    }
+    if (_categoryIdx < 0 || _categoryIdx >= int(_categories.size())) _categoryIdx = 0;
+    const auto& current = _categories[_categoryIdx];
+    _catRangeStart = current.startIdx;
+    _catRangeEnd = current.startIdx + current.count;
+    _selectedIdx = _catRangeStart;
+    for (int i = _catRangeStart; i < _catRangeEnd; ++i) {
+        if (_items[i].id == selected) { _selectedIdx = i; break; }
+    }
 }
 
 void LvSettingsScreen::createUI(lv_obj_t* parent) {
@@ -1127,9 +1269,14 @@ void LvSettingsScreen::createUI(lv_obj_t* parent) {
 }
 
 void LvSettingsScreen::onEnter() {
+    _viewActive = true;
+    _itemsNeedRebuild = _service && _service->settingsPending();
+    _itemRefreshPending = false;
     ++_propGeneration; _propChoicePending = false; _propCount = 0;
     ++_fwViewGeneration;
-    buildItems();
+    // Keep the last complete layout while an unaccepted candidate is being
+    // restored; the pending flag retains a rebuild after canonical publication.
+    if (!_itemsNeedRebuild || _items.empty()) buildItems();
     _rebootNeeded = rebootSettingsChanged();
     _view = SettingsView::CATEGORY_LIST;
     _categoryIdx = 0;
@@ -1147,6 +1294,17 @@ void LvSettingsScreen::onEnter() {
 }
 
 void LvSettingsScreen::refreshUI() {
+    if (!_viewActive) return;
+    if ((!_service || !_service->settingsPending()) && !_editing && !_textEditing && !_freqEditing &&
+        (_itemsNeedRebuild || _itemRefreshPending)) {
+        if (_itemsNeedRebuild) {
+            _rebootNeeded = rebootSettingsChanged();
+            buildItems();
+        }
+        _itemsNeedRebuild = _itemRefreshPending = false;
+        if (_view == SettingsView::ITEM_LIST) rebuildItemList();
+        else if (_view == SettingsView::CATEGORY_LIST) rebuildCategoryList();
+    }
     pollPropagationUI();
     FirmwareCheckState fwState = _fwCheckState.load(std::memory_order_acquire);
     if (!firmwareCheckRunning() && fwState != FirmwareCheckState::IDLE && fwState != FirmwareCheckState::RUNNING) {
@@ -1165,7 +1323,7 @@ void LvSettingsScreen::refreshUI() {
         if (_view == SettingsView::ITEM_LIST) rebuildItemList();
     }
 
-    if (_service && !_editing && !_textEditing && !_freqEditing &&
+    if (_service && !_service->settingsPending() && !_editing && !_textEditing && !_freqEditing &&
         _lastIdentityRevision != _service->identityRevision()) {
         _lastIdentityRevision = _service->identityRevision();
         buildItems();
@@ -1179,7 +1337,11 @@ void LvSettingsScreen::showWifiPicker() {
     _wifiPickerIdx = 0;
     _wifiScanActive = true;
     _wifiScanOutcome = handheld::Outcome::NotReady;
-    if (!_service || !_service->scan([this](const handheld::Result& result) {
+    const auto generation = _fwViewGeneration;
+    const auto scanGeneration = ++_wifiScanGeneration;
+    if (!_service || !_service->scan([this, generation, scanGeneration](const handheld::Result& result) {
+        if (!_viewActive || generation != _fwViewGeneration || scanGeneration != _wifiScanGeneration ||
+            _view != SettingsView::WIFI_PICKER) return;
         _wifiScanActive = false;
         _wifiScanOutcome = result.outcome;
         _wifiResults.clear();
@@ -1222,6 +1384,7 @@ void LvSettingsScreen::showWifiPicker() {
 
 void LvSettingsScreen::rebuildCategoryList() {
     if (!_scrollContainer) return;
+    _rebuildingList = true;
     _rowObjs.clear();
     lv_obj_clean(_scrollContainer);
 
@@ -1275,10 +1438,16 @@ void LvSettingsScreen::rebuildCategoryList() {
             self->_categoryIdx = idx;
             self->enterCategory(idx);
         }, LV_EVENT_CLICKED, this);
-        lv_group_add_obj(LvInput::group(), row);
         lv_obj_add_event_cb(row, [](lv_event_t* e) {
-            lv_obj_scroll_to_view(lv_event_get_target(e), LV_ANIM_ON);
-        }, LV_EVENT_FOCUSED, nullptr);
+            auto* self = static_cast<LvSettingsScreen*>(lv_event_get_user_data(e));
+            if (self->_rebuildingList) return;
+            const int index = int(intptr_t(lv_obj_get_user_data(lv_event_get_target(e))));
+            if (index < 0 || index >= int(self->_categories.size())) return;
+            const int previous = self->_categoryIdx;
+            self->_categoryIdx = index;
+            self->updateCategorySelection(previous, index);
+        }, LV_EVENT_FOCUSED, this);
+        lv_group_add_obj(LvInput::group(), row);
 
         // Category name
         lv_obj_t* nameLbl = lv_label_create(row);
@@ -1308,14 +1477,19 @@ void LvSettingsScreen::rebuildCategoryList() {
         _rowObjs.push_back(row);
     }
 
+    _rebuildingList = false;
     // Restore focus to current category
     if (_categoryIdx >= 0 && _categoryIdx < (int)_rowObjs.size()) {
         LvInput::focusObj(_rowObjs[_categoryIdx]);
+        lv_obj_scroll_to_view(_rowObjs[_categoryIdx], LV_ANIM_OFF);
     }
 }
 
 void LvSettingsScreen::rebuildItemList() {
     if (!_scrollContainer) return;
+    // Group removal/registration fires focus events synchronously. Those
+    // transient events must not replace the intended selection during rebuild.
+    _rebuildingList = true;
     _rowObjs.clear();
     _editValueLbl = nullptr;  // Invalidate cached label before destroying widgets
     lv_obj_clean(_scrollContainer);
@@ -1383,7 +1557,7 @@ void LvSettingsScreen::rebuildItemList() {
     const char* confirmTitle = confirmationTitle();
     const char* confirmDetail = confirmationDetail();
     if (confirmTitle && confirmDetail) {
-        uint32_t confirmColor = _confirmingDevMode ? Theme::WARNING_CLR : Theme::ERROR_CLR;
+        uint32_t confirmColor = _confirmingDevMode || _confirmingInitSD ? Theme::WARNING_CLR : Theme::ERROR_CLR;
         lv_obj_t* confirm = lv_obj_create(_scrollContainer);
         lv_obj_set_size(confirm, Theme::CONTENT_W, 34);
         lv_obj_set_style_bg_color(confirm, lv_color_hex(Theme::BG_SURFACE), 0);
@@ -1412,9 +1586,9 @@ void LvSettingsScreen::rebuildItemList() {
 
     for (int i = _catRangeStart; i < _catRangeEnd; i++) {
         const auto& item = _items[i];
-        const bool fullValue = strcmp(item.label, "Manual node") == 0 ||
-            strcmp(item.label, "Storage limit") == 0 || strcmp(item.label, "At limit") == 0;
-        const bool deliveryPolicy = strcmp(item.label, "Delivery") == 0;
+        const bool fullValue = item.id == SettingId::PropagationManualNode ||
+            item.id == SettingId::VoiceStorageLimit || item.id == SettingId::VoiceAtLimit;
+        const bool deliveryPolicy = item.id == SettingId::PropagationDelivery;
         bool selected = (i == _selectedIdx);
         bool editable = isEditable(i);
         bool rebootPending = settingNeedsReboot(item);
@@ -1425,18 +1599,16 @@ void LvSettingsScreen::rebuildItemList() {
         lv_obj_t* row = lv_obj_create(_scrollContainer);
         lv_obj_set_size(row, Theme::CONTENT_W, fullValue ? 44 : _freqEditing && selected ? 46 : 28);
         lv_obj_add_style(row, LvTheme::styleListBtn(), 0);
-        if (editable) {
-            lv_obj_add_style(row, LvTheme::styleListBtnFocused(), LV_STATE_FOCUSED);
-        }
-        lv_obj_set_style_bg_color(row, lv_color_hex(armed ? Theme::BG_SURFACE : (selected && editable ? Theme::BG_HOVER : Theme::BG)), 0);
+        lv_obj_add_style(row, LvTheme::styleListBtnFocused(), LV_STATE_FOCUSED);
+        lv_obj_set_style_bg_color(row, lv_color_hex(armed ? Theme::BG_SURFACE : (selected ? Theme::BG_HOVER : Theme::BG)), 0);
         lv_obj_set_style_border_color(row, lv_color_hex(armed ? armedColor : (rebootPending ? Theme::WARNING_CLR : Theme::BORDER)), 0);
         lv_obj_set_style_border_width(row, rebootPending || armed ? 2 : 1, 0);
         lv_obj_set_style_border_side(row, rebootPending || armed ? (lv_border_side_t)(LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_BOTTOM) : LV_BORDER_SIDE_BOTTOM, 0);
         lv_obj_set_style_pad_all(row, 0, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(row, (void*)(intptr_t)i);
         if (editable) {
             lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_set_user_data(row, (void*)(intptr_t)i);
             lv_obj_add_event_cb(row, [](lv_event_t* e) {
                 auto* self = (LvSettingsScreen*)lv_event_get_user_data(e);
                 int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
@@ -1451,11 +1623,30 @@ void LvSettingsScreen::rebuildItemList() {
                 tap.enter = true;
                 self->handleKey(tap);
             }, LV_EVENT_CLICKED, this);
-            lv_group_add_obj(LvInput::group(), row);
-            lv_obj_add_event_cb(row, [](lv_event_t* e) {
-                lv_obj_scroll_to_view(lv_event_get_target(e), LV_ANIM_ON);
-            }, LV_EVENT_FOCUSED, nullptr);
         }
+        // Information and one-choice rows are navigable but never activatable.
+        lv_obj_add_event_cb(row, [](lv_event_t* e) {
+            auto* self = static_cast<LvSettingsScreen*>(lv_event_get_user_data(e));
+            if (self->_rebuildingList) return;
+            const int index = int(intptr_t(lv_obj_get_user_data(lv_event_get_target(e))));
+            if (index < self->_catRangeStart || index >= self->_catRangeEnd) return;
+            const int previous = self->_selectedIdx;
+            if (index != previous && (self->_editing || self->_textEditing || self->_freqEditing)) {
+                // Pointer focus arrives on press, including drags without a
+                // click. A draft must never migrate to another row's setter.
+                self->_editing = self->_textEditing = self->_freqEditing = false;
+                self->_numericTyping = false;
+                self->_editValueLbl = nullptr;
+                self->_itemRefreshPending = true;
+            }
+            self->_selectedIdx = index;
+            if (self->hasPendingConfirmation() && !self->armedAction(self->_items[index])) {
+                self->clearConfirmations();
+                self->_itemRefreshPending = true;
+            }
+            self->updateItemSelection(previous, index);
+        }, LV_EVENT_FOCUSED, this);
+        lv_group_add_obj(LvInput::group(), row);
 
         // Label
         lv_obj_t* nameLbl = lv_label_create(row);
@@ -1492,7 +1683,7 @@ void LvSettingsScreen::rebuildItemList() {
                     break;
                 case SettingType::TEXT_INPUT: {
                     String v = item.textGetter ? item.textGetter() : "";
-                    valStr = v.isEmpty() ? "(not set)" : (isWiFiPasswordLabel(item.label) ? maskedValue(v) : v);
+                    valStr = v.isEmpty() ? "(not set)" : (item.id == SettingId::WiFiPassword ? maskedValue(v) : v);
                     valColor = v.isEmpty() ? Theme::TEXT_MUTED : Theme::PRIMARY;
                     break;
                 }
@@ -1522,7 +1713,7 @@ void LvSettingsScreen::rebuildItemList() {
 
         if (!valStr.isEmpty()) {
             lv_obj_t* valLbl = lv_label_create(row);
-            if (isWiFiPasswordLabel(item.label)) LvPrivacy::markSensitive(valLbl);
+            if (item.id == SettingId::WiFiPassword) LvPrivacy::markSensitive(valLbl);
             lv_obj_set_style_text_font(valLbl, fullValue ? &lv_font_rsdeck_10 : font, 0);
             lv_obj_set_style_text_color(valLbl, lv_color_hex(valColor), 0);
             lv_obj_set_style_text_align(valLbl, LV_TEXT_ALIGN_RIGHT, 0);
@@ -1552,10 +1743,12 @@ void LvSettingsScreen::rebuildItemList() {
         _rowObjs.push_back(row);
     }
 
-    // Restore focus to the currently selected item after rebuild
+    // Restore once after all transient group focus changes have settled.
+    _rebuildingList = false;
     int focusOffset = _selectedIdx - _catRangeStart;
     if (focusOffset >= 0 && focusOffset < (int)_rowObjs.size()) {
         LvInput::focusObj(_rowObjs[focusOffset]);
+        lv_obj_scroll_to_view(_rowObjs[focusOffset], LV_ANIM_OFF);
     }
 }
 
@@ -1740,11 +1933,10 @@ void LvSettingsScreen::updateItemSelection(int oldIdx, int newIdx) {
     auto setItemRowBg = [&](int row, bool selected) {
         if (row < 0 || row >= (int)_rowObjs.size()) return;
         int itemIdx = row + _catRangeStart;
-        bool editable = isEditable(itemIdx);
         const auto& item = _items[itemIdx];
         bool armed = armedAction(item);
         lv_obj_set_style_bg_color(_rowObjs[row], lv_color_hex(
-            armed ? Theme::BG_SURFACE : ((selected && editable) ? Theme::BG_HOVER : Theme::BG)), 0);
+            armed ? Theme::BG_SURFACE : (selected ? Theme::BG_HOVER : Theme::BG)), 0);
     };
     setItemRowBg(oldRow, false);
     setItemRowBg(newRow, true);
@@ -1779,7 +1971,6 @@ void LvSettingsScreen::enterCategory(int catIdx) {
     _freqEditing = false;
     _numericTyping = false;
     _editValueLbl = nullptr;
-    if (!isEditable(_selectedIdx)) skipToNextEditable(1);
     _view = SettingsView::ITEM_LIST;
     rebuildItemList();
 }
@@ -1828,6 +2019,10 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                     }
                 };
                 if (event.enter || event.character == '\n' || event.character == '\r') {
+                    if (item.id == SettingId::TcpHost && !hasTcpHost(_editText)) {
+                        if (_ui) _ui->lvStatusBar().showToast("Enter a TCP host", 2000);
+                        return true;
+                    }
                     bool assigned = false;
                     try { assigned = item.textSetter && item.textSetter(_editText); }
                     catch (const std::bad_alloc&) {}
@@ -1835,9 +2030,9 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                         if (_ui) _ui->lvStatusBar().showToast("Settings memory unavailable; retry", 2000);
                         return true;
                     }
+                    if (!applyAndSave()) return true;
                     _textEditing = false;
                     _editValueLbl = nullptr;
-                    applyAndSave();
                     rebuildItemList();
                     return true;
                 }
@@ -1902,9 +2097,10 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                         if (_ui) _ui->lvStatusBar().showToast("Settings memory unavailable; retry", 2000);
                         return true;
                     }
+                    if (!applyAndSave()) return true;
                     _freqEditing = false; _editing = false;
                     _editValueLbl = nullptr;
-                    applyAndSave(); rebuildItemList(); return true;
+                    rebuildItemList(); return true;
                 }
                 if (event.del || event.character == 8) {
                     if (_freqCursor > 0) _freqCursor--;
@@ -1960,14 +2156,31 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                 if (event.enter || event.character == '\n' || event.character == '\r') {
                     if (_editValue < item.minVal && !(item.allowOff && _editValue == 0))
                         _editValue = item.minVal;
+                    if (item.id == SettingId::TcpServer && _editValue == 2 &&
+                        _cfg && customTcpEndpoint(_cfg->settings()) < 0) {
+                        // Custom without a retained endpoint is a Host draft,
+                        // not a hostless setting that sanitation would discard.
+                        for (int i = _catRangeStart; i < _catRangeEnd; ++i) {
+                            if (_items[i].id != SettingId::TcpHost) continue;
+                            const auto& value = _items[i].textGetter();
+                            if (!UserConfig::trySetString(_editText, value.c_str(), value.length())) {
+                                if (_ui) _ui->lvStatusBar().showToast("Settings memory unavailable; retry", 2000);
+                                return true;
+                            }
+                            _selectedIdx = i; _editing = _numericTyping = false; _textEditing = true;
+                            rebuildItemList();
+                            return true;
+                        }
+                        return true;
+                    }
                     try { if (item.setter) item.setter(_editValue); }
                     catch (const std::bad_alloc&) {
                         if (_ui) _ui->lvStatusBar().showToast("Settings memory unavailable; retry", 2000);
                         return true;
                     }
+                    if (!applyAndSave()) return true;
                     _editing = false;
                     _numericTyping = false;
-                    applyAndSave();
                     rebuildItemList(); return true;
                 }
                 if (event.del || event.character == 8) {
@@ -2012,9 +2225,19 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                 if (focused) _selectedIdx = (int)(intptr_t)lv_obj_get_user_data(focused);
                 if (!isEditable(_selectedIdx)) return true;
                 auto& item = _items[_selectedIdx];
+                if (item.id == SettingId::TcpPort && _cfg && selectedTcpEndpoint(_cfg->settings()) < 0) {
+                    if (_ui) _ui->lvStatusBar().showToast("Set Host first", 2000);
+                    return true;
+                }
                 if (item.type == SettingType::ACTION) {
                     if (!confirmableAction(item)) clearConfirmations();
                     if (item.action) item.action();
+                    // Finish the callback before replacing the std::function
+                    // that owns it (developer-mode locking changes the rows).
+                    if (_itemsNeedRebuild && (!_service || !_service->settingsPending())) {
+                        _itemsNeedRebuild = false;
+                        buildItems();
+                    }
                     if (_view == SettingsView::ITEM_LIST) rebuildItemList();
                 } else if (item.type == SettingType::TEXT_INPUT) {
                     clearConfirmations();
@@ -2036,7 +2259,7 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                     }
                     applyAndSave();
                     rebuildItemList();
-                } else if (strcmp(item.label, "Frequency") == 0 && item.type == SettingType::INTEGER) {
+                } else if (item.id == SettingId::Frequency && item.type == SettingType::INTEGER) {
                     clearConfirmations();
                     // Radio-style digit cursor editor for frequency
                     _editing = true;
@@ -2117,19 +2340,19 @@ bool LvSettingsScreen::handleLongPress() {
     if (focusedIdx < 0 || focusedIdx >= (int)_items.size()) return false;
 
     const auto& item = _items[focusedIdx];
-    if (_confirmingInitSD && labelEq(item.label, "Format SD Card")) {
+    if (_confirmingInitSD && item.id == SettingId::InitializeSd) {
         runFormatSD();
         return true;
     }
-    if (_confirmingWipeSD && labelEq(item.label, "Erase " DEVICE_NAME " SD Data")) {
+    if (_confirmingWipeSD && item.id == SettingId::EraseSd) {
         runWipeSD();
         return true;
     }
-    if (_confirmingReset && labelEq(item.label, "Erase Device")) {
+    if (_confirmingReset && item.id == SettingId::EraseDevice) {
         runFactoryReset();
         return true;
     }
-    if (_confirmingDevMode && labelEq(item.label, "Developer Radio Controls")) {
+    if (_confirmingDevMode && item.id == SettingId::DeveloperControls) {
         runEnableDevMode();
         return true;
     }
@@ -2232,17 +2455,34 @@ String LvSettingsScreen::freqFormatWithCursor() const {
     return String(buf);
 }
 
-void LvSettingsScreen::applyAndSave() {
-    if (!_service || !_cfg) return;
+bool LvSettingsScreen::applyAndSave(bool rebuildItems) {
+    if (!_service || !_cfg) return false;
     const bool wasRebootNeeded = _rebootNeeded;
     const bool tcpChanged = tcpSettingsChanged();
-    _service->applySettings([this, wasRebootNeeded, tcpChanged](const handheld::Result& result) {
+    const auto generation = _fwViewGeneration;
+    const bool admitted = _service->applySettings([this, wasRebootNeeded, tcpChanged, generation, rebuildItems](const handheld::Result& result) {
         _rebootNeeded = rebootSettingsChanged();
-        if (_screen && _view == SettingsView::ITEM_LIST) rebuildItemList();
+        _itemsNeedRebuild |= rebuildItems || _service->settingsPending();
+        if (!_viewActive || generation != _fwViewGeneration) {
+            // A subsequent Settings visit must show a late rollback/publication,
+            // but this old callback must never reclaim its focus or show a toast.
+            if (_viewActive) _itemsNeedRebuild = true;
+            return;
+        }
+        if (_screen && _view == SettingsView::ITEM_LIST && !rebuildItems) rebuildItemList();
         if (!_ui || result.outcome != handheld::Outcome::Ok) return;
         _ui->lvStatusBar().showToast(
             _rebootNeeded ? (tcpChanged ? "TCP server saved; reboot to apply" : "Interface changes saved; reboot to apply") :
             wasRebootNeeded ? "Pending reboot cleared" :
             result.detail[0] ? result.detail : "Saved", 2000);
     });
+    if (!admitted) {
+        // Local refusal can retain the candidate in ServiceClient. Keep only
+        // this editor's small draft, so later saves cannot include abandoned edits.
+        _service->discardSettingsEdit();
+        _itemsNeedRebuild = true;
+        _propChoicePending = false;
+        _rebootNeeded = rebootSettingsChanged();
+    }
+    return admitted;
 }

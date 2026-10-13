@@ -1,8 +1,11 @@
 #include "WiFiInterface.h"
 #include "WiFiScanSupport.h"
 #include "config/Config.h"
+#include "config/ConfigMemory.h"
 #include "config/NetworkTiming.h"
 #include <esp_wifi.h>
+#include <cstring>
+#include <utility>
 
 namespace {
 // The pinned Arduino 2.0.x API exposes its shared scan deadline to subclasses.
@@ -16,7 +19,6 @@ struct ScanDeadline : WiFiScanClass {
 WiFiInterface::WiFiInterface(const char* name)
     : _name(name ? name : "WiFiInterface"), _server(WIFI_AP_PORT)
 {
-    _apPassword = WIFI_AP_PASSWORD;
     _txBuffer = (uint8_t*)ps_malloc(TX_BUFFER_SIZE);
     if (!_txBuffer) _txBuffer = (uint8_t*)malloc(TX_BUFFER_SIZE);
 }
@@ -26,9 +28,36 @@ WiFiInterface::~WiFiInterface() {
     if (_txBuffer) { free(_txBuffer); _txBuffer = nullptr; }
 }
 
-void WiFiInterface::setAPCredentials(const char* ssid, const char* password) {
-    _apSSID = ssid;
-    _apPassword = password;
+bool WiFiInterface::prepareAPCredentials(const char* ssid, const char* password, APCredentials& prepared) {
+    if (!ssid || !password) return false;
+    char generated[32];
+    if (!*ssid) {
+        snprintf(generated, sizeof(generated), DEVICE_AP_PREFIX "-%04x",
+                 unsigned(ESP.getEfuseMac() & 0xFFFF));
+        ssid = generated;
+    }
+    const size_t nameLength = strlen(ssid), passwordLength = strlen(password);
+    if (nameLength > 32 || passwordLength > 64) return false;
+    APCredentials candidate;
+    using handheld::config::Memory;
+    if (!Memory::reserveString(candidate.ssid, nameLength) || !candidate.ssid.concat(ssid, nameLength) ||
+        (passwordLength && (!Memory::reserveString(candidate.password, passwordLength) ||
+                            !candidate.password.concat(password, passwordLength))) || !Memory::admits(0)) return false;
+    prepared = std::move(candidate);
+    return true;
+}
+
+void WiFiInterface::setAPCredentials(APCredentials&& prepared) {
+    _apSSID = std::move(prepared.ssid);
+    _apPassword = std::move(prepared.password);
+    _apConfigured = true;
+}
+
+bool WiFiInterface::setAPCredentials(const char* ssid, const char* password) {
+    APCredentials prepared;
+    if (!prepareAPCredentials(ssid, password, prepared)) return false;
+    setAPCredentials(std::move(prepared));
+    return true;
 }
 
 void WiFiInterface::setSTACredentials(const char* ssid, const char* password) {
@@ -42,13 +71,7 @@ bool WiFiInterface::isSTAConnected() const {
 
 bool WiFiInterface::startAP() {
     WiFi.persistent(false); // Credentials persist through UserConfig, not SDK NVS.
-    // Generate SSID from chip ID if not set
-    if (_apSSID.isEmpty()) {
-        uint32_t chip = ESP.getEfuseMac() & 0xFFFF;
-        char ssid[32];
-        snprintf(ssid, sizeof(ssid), DEVICE_AP_PREFIX "-%04x", chip);
-        _apSSID = ssid;
-    }
+    if (!_apConfigured && !setAPCredentials("", WIFI_AP_PASSWORD)) return false;
 
     // AP-only mode — saves ~20KB vs WIFI_AP_STA
     if (!WiFi.mode(WIFI_AP) || !WiFi.softAP(_apSSID.c_str(), _apPassword.c_str())) {

@@ -23,6 +23,7 @@ public:
     bool handleKey(const KeyEvent& event) override;
     const char* title() const override { return "Settings"; }
     void onEnter() override;
+    void onExit() override;
 
     void setUserConfig(UserConfig* cfg) { _config = cfg; _candidateReady = cfg && _candidate.tryAssign(*cfg); _candidateDirty = false; }
     void setFlashStore(FlashStore* flash) { _flash = flash; }
@@ -48,6 +49,8 @@ public:
     void setSaveCallback(SaveCallback cb) { _saveCb = cb; }
     // Called once after an initially pending transaction settles on the board.
     void applyCommitted(bool refreshCandidate = true);
+    // Outcome text is static owner storage; callbacks must not navigate the UI.
+    void notifyNetworkOutcome(const char* outcome) { if (_active && outcome) showToast(outcome, 2500); }
     void setMaintenanceCallback(std::function<bool(handheld::Operation)> cb) { _maintenanceCb = cb; }
 
     void setMaintenanceBlockReason(const char* reason) { _maintenanceReason=reason; }
@@ -59,7 +62,29 @@ public:
 private:
     enum SubMenu { MENU_MAIN, MENU_RADIO, MENU_WIFI, MENU_TCP, MENU_SDCARD,
                    MENU_DISPLAY, MENU_AUDIO, MENU_ABOUT, MENU_WIFI_SCAN,
-                   MENU_PROPAGATION, MENU_PROPAGATION_CHOICE, MENU_PROPAGATION_NODES, MENU_VOICE };
+                   MENU_PROPAGATION, MENU_PROPAGATION_CHOICE, MENU_PROPAGATION_NODES, MENU_VOICE,
+                   MENU_IDENTITY, MENU_RADIO_PRESETS, MENU_COUNT };
+
+    // Routing lives alongside each visible row, independent of its position.
+    // The largest list is the bounded propagation snapshot: two rows per node.
+    enum class RowAction : uint8_t { Info, OpenMenu, Back, Edit, Preset,
+        WiFiMode, WiFiConnection, WiFiScan, WiFiNetwork, AutoDiscover,
+        TCPAdd, TCPToggle, AudioToggle, SDInitialize, SDWipe, FactoryReset,
+        Voice, Propagation, Heap, Uptime };
+    struct Row { RowAction action = RowAction::Info; uint8_t value = 0; };
+    static constexpr size_t RowCapacity = handheld::propagation::NodeViewCapacity * 2 + 2;
+    static_assert(RowCapacity >= 17, "Settings rows must accommodate the Wi-Fi scan bound");
+    Row _rows[RowCapacity]{};
+    Row _focus[MENU_COUNT]{};
+    size_t _rowCount = 0;
+    bool _active = false, _scanVisible = false;
+    void clearRows();
+    void addRow(const std::string&, RowAction = RowAction::Info, uint8_t value = 0, uint16_t color = 0);
+    Row selectedRow() const;
+    void restoreRow(Row row);
+    void enterMenu(SubMenu menu);
+    void rebuildMenu();
+    void backMenu();
 
     void buildPropagationMenu();
     void buildVoiceMenu();
@@ -76,13 +101,15 @@ private:
 
     void buildMainMenu();
     void buildRadioMenu();
+    void buildRadioPresetsMenu();
     void buildWiFiMenu();
     void buildTCPMenu();
     void buildSDCardMenu();
     void sdCardFormat();
     void buildDisplayMenu();
+    void buildIdentityMenu();
     void buildAudioMenu();
-    void renderAbout(M5Canvas& canvas);
+    void buildDeviceMenu();
 
     // WiFi scanner
     void startWiFiScan();

@@ -6,23 +6,24 @@
 using namespace handheld::propagation;
 
 void SettingsScreen::buildPropagationMenu() {
-    _list.clear();
+    clearRows();
     if (!_config) return;
     const auto& settings = _candidate.settings().propagation;
-    _list.addItem(settings.enabled ? "Propagation: ON" : "Propagation: OFF");
-    _list.addItem(settings.selection == Selection::Auto ? "Node mode: AUTO" : "Node mode: MANUAL");
-    _list.addItem(settings.delivery == Delivery::Auto ? "Delivery AUTO: direct first" : "Delivery ALWAYS: relay only");
+    addRow(settings.enabled ? "Propagation: ON" : "Propagation: OFF", RowAction::Propagation, 0);
+    addRow(settings.selection == Selection::Auto ? "Node mode: AUTO" : "Node mode: MANUAL", RowAction::Propagation, 1);
+    addRow(settings.delivery == Delivery::Auto ? "Delivery AUTO: direct first" : "Delivery ALWAYS: relay only", RowAction::Propagation, 2);
     char address[33]; settings.manualHex(address);
-    _list.addItem(settings.hasManual ? std::string("Pin ") + address : "Manual node: Not set");
-    _list.addItem("Choose / replace node");
-    _list.addItem("Clear manual node");
-    _list.addItem("Sync now");
+    addRow(settings.hasManual ? std::string("Pin ") + address : "Manual node: Not set");
+    addRow("Choose / replace node", RowAction::Propagation, 4);
+    addRow("Clear manual node", RowAction::Propagation, 5);
+    addRow("Sync now", RowAction::Propagation, 6);
     _propStatus = _backend ? _backend->propagationStatus().status : SyncStatus::Off;
-    _list.addItem(std::string("Inbox: ") + syncLabel(_propStatus));
-    _list.addItem("< Back");
+    addRow(std::string("Inbox: ") + syncLabel(_propStatus));
+    addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::pollPropagationUI() {
+    if (!_active) return;
     if (_propChoicePending && _config && !_config->settingsPending() && !_radioApplyPending) {
         _propChoicePending = false;
         if (!_candidateDirty && _subMenu == MENU_PROPAGATION &&
@@ -35,12 +36,16 @@ void SettingsScreen::pollPropagationUI() {
 }
 
 void SettingsScreen::showPropagationChoice() {
+    if (_subMenu != MENU_PROPAGATION_CHOICE && _subMenu != MENU_PROPAGATION_NODES)
+        _focus[_subMenu] = selectedRow();
     _subMenu = MENU_PROPAGATION_CHOICE; _propChoicePending = false;
-    _list.clear(); _list.addItem("Enter address"); _list.addItem("Choose from list"); _list.addItem("< Back");
+    clearRows(); addRow("Enter address", RowAction::Propagation, 0);
+    addRow("Choose from list", RowAction::Propagation, 1); addRow("< Back", RowAction::Back);
 }
 
 void SettingsScreen::showPropagationNodes() {
-    _subMenu = MENU_PROPAGATION_NODES; _list.clear();
+    if (_subMenu != MENU_PROPAGATION_NODES) _focus[_subMenu] = selectedRow();
+    _subMenu = MENU_PROPAGATION_NODES; clearRows();
     _propCount = _backend ? _backend->propagationNodes(_propNodes, NodeViewCapacity) : 0;
     if (_propCount > NodeViewCapacity) _propCount = 0;
     std::sort(_propNodes, _propNodes + _propCount, [](const NodeView& a, const NodeView& b) {
@@ -57,10 +62,12 @@ void SettingsScreen::showPropagationNodes() {
         const auto& settings = _candidate.settings().propagation;
         handheld::ui::propagationNodeTitle(_propNodes[i], settings.enabled && settings.selection == Selection::Auto,
             label, sizeof label);
-        _list.addItem(label); _list.addItem(address);
+        addRow(label, RowAction::Propagation, uint8_t(i * 2));
+        addRow(address, RowAction::Propagation, uint8_t(i * 2 + 1));
     }
-    if (!_propCount) _list.addItem("No nodes discovered");
-    _list.addItem("Refresh nodes"); _list.addItem("< Back");
+    if (!_propCount) addRow("No nodes discovered");
+    addRow("Refresh nodes", RowAction::Propagation, uint8_t(_list.itemCount()));
+    addRow("< Back", RowAction::Back);
 }
 
 bool SettingsScreen::savePropagationAddress(const uint8_t address[16]) {
@@ -68,7 +75,8 @@ bool SettingsScreen::savePropagationAddress(const uint8_t address[16]) {
     auto& settings = _candidate.settings().propagation;
     memcpy(settings.manual, address, 16); settings.hasManual = true; settings.selection = Selection::Manual;
     if (!applyAndSave()) return false;
-    _subMenu = MENU_PROPAGATION; buildPropagationMenu(); return true;
+    _subMenu = MENU_PROPAGATION; buildPropagationMenu();
+    restoreRow(_focus[MENU_PROPAGATION]); return true;
 }
 
 void SettingsScreen::activatePropagationRow(int row) {
@@ -91,7 +99,6 @@ void SettingsScreen::activatePropagationRow(int row) {
                 _backend->propagationSync()?"Sync requested":"Wait 30s, then sync again";
             showToast(feedback,2500);
         }
-        else if (row == 8) { _subMenu = MENU_MAIN; buildMainMenu(); return; }
         buildPropagationMenu(); _list.setSelected(row); pollPropagationUI();
     } else if (_subMenu == MENU_PROPAGATION_CHOICE) {
         if (row == 0) {
@@ -99,10 +106,8 @@ void SettingsScreen::activatePropagationRow(int row) {
             startEditing(0, address); _editLabel = "Node: 32 hexadecimal characters";
             _editInput.setMaxLength(32); _editInput.setNumericOnly(false);
         } else if (row == 1) showPropagationNodes();
-        else if (row == 2) { _subMenu = MENU_PROPAGATION; buildPropagationMenu(); }
     } else if (_subMenu == MENU_PROPAGATION_NODES) {
-        if (row == _list.itemCount() - 1) showPropagationChoice();
-        else if (row == _list.itemCount() - 2) showPropagationNodes();
+        if (row == _list.itemCount() - 2) showPropagationNodes();
         else if (row >= 0 && size_t(row / 2) < _propCount) savePropagationAddress(_propNodes[row / 2].address);
     }
 }

@@ -134,6 +134,18 @@ uint32_t ServiceClient::requestPeerName(const std::string& peer, TextCompletion 
     return submit(request, "", ServiceMailbox::MaxPayload, std::move(completion));
 }
 
+bool ServiceClient::discardSettingsEdit() {
+    if (settingsPending()) return false;
+    UserConfig restored;
+    if (_configReady && restored.tryAssign(_committed)) {
+        config.swap(restored);
+        return true;
+    }
+    _settingsRefresh = true;
+    tell("Settings refresh pending");
+    return false;
+}
+
 bool ServiceClient::applySettings(Completion completion, bool applyRadio) {
     if (!_configReady) { tell("Settings unavailable; retry"); return false; }
     if (settingsPending()) { tell("Settings save in progress"); return false; }

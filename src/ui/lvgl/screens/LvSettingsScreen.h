@@ -1,6 +1,7 @@
 #pragma once
 
 #include "UIManager.h"
+#include "SettingsIdentity.h"
 #include "runtime/ServiceClient.h"
 #include "transport/WiFiInterface.h"
 #include "config/UserConfig.h"
@@ -46,6 +47,7 @@ struct SettingItem {
     std::function<bool(const String&)> textSetter;
     int maxTextLen = 16;
     bool allowOff = false; // INTEGER: zero is OFF; minVal is the minimum enabled value.
+    SettingId id = SettingId::None;
 };
 
 struct SettingsCategory {
@@ -53,6 +55,7 @@ struct SettingsCategory {
     int startIdx;
     int count;
     std::function<String()> summary;
+    SettingsCategoryId id = SettingsCategoryId::None;
 };
 
 class LvSettingsScreen : public LvScreen {
@@ -102,7 +105,7 @@ private:
     size_t _propCount = 0;
     bool _propLoading = false, _propFailed = false, _propChoicePending = false;
     handheld::propagation::SyncStatus _propStatus = handheld::propagation::SyncStatus::Off;
-    void applyAndSave();
+    bool applyAndSave(bool rebuildItems = false);
     void applyPreset(int presetIdx);
     int detectPreset() const;
     bool isEditable(int idx) const;
@@ -157,6 +160,10 @@ private:
     int _catRangeEnd = 0;
 
     // Edit state
+    bool _itemsNeedRebuild = false;
+    bool _rebuildingList = false;
+    bool _itemRefreshPending = false;
+    bool _viewActive = false;
     bool _editing = false;
     int _editValue = 0;
     bool _numericTyping = false;   // true once user types digits in INTEGER edit
@@ -193,6 +200,7 @@ private:
     int _wifiPickerIdx = 0;
     size_t _wifiTargetSlot = 0;
     bool _wifiScanActive = false;
+    uint32_t _wifiScanGeneration = 0;
     handheld::Outcome _wifiScanOutcome = handheld::Outcome::Ok;
 
     // Reboot-required tracking
