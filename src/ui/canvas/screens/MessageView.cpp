@@ -1,7 +1,9 @@
 #include "MessageView.h"
 #include "ui/FeatureAvailability.h"
 #include "storage/Hex.h"
+#include "storage/MessageStore.h"
 #include "StorageWindowAdapter.h"
+#include "history/RrcHistory.h"
 #include "ui/RrcCompose.h"
 #include "reticulum/MessageStatusDetail.h"
 #include "Theme.h"
@@ -148,26 +150,36 @@ bool MessageView::prepareDraft(String& identity) {
     } catch (const std::bad_alloc&) { return false; }
 }
 
+#if HANDHELD_RRC_UI_ENABLED
 #include "RrcChat.inc"
+#endif
 
 #include "MessageTools.inc"
 
 bool MessageView::setPeerHex(const std::string& peerHex) {
+#if HANDHELD_RRC_UI_ENABLED
     if (!leaveRrcDraft()) return false;
+#endif
     if((_rrcMode || _peerHex!=peerHex) && _voiceClose) _voiceClose();
     if (_rrcMode) _history.refresh();
     if (_rrcMode || _peerHex!=peerHex) _history.close();
     _messageTools.close();_selectAfterPage=false;
-    _rrcMode=false;++_rrcView;_peerHex=peerHex;
+#if HANDHELD_RRC_UI_ENABLED
+    _rrcMode=false;++_rrcView;
+#endif
+    _peerHex=peerHex;
     return true;
 }
 void MessageView::onExit() {
     _messageTools.close();_selectAfterPage=false;
     if(_voiceClose) _voiceClose();
+#if HANDHELD_RRC_UI_ENABLED
     _rrcTools.close();
     _rrcSendRequested=false; // Already-admitted messages continue on their protocol owner.
     if (_rrcMode) saveRrcDraft(true);
-    else if (_backend && (!_sendTicket.valid() || _retainedPeer==_peerHex)) {
+    else
+#endif
+    if (_backend && (!_sendTicket.valid() || _retainedPeer==_peerHex)) {
         _retainedDraft=_input.getText();_retainedPeer=_peerHex;
         _retainedIdentity=_backend->destinationHashHex().c_str();
     }
@@ -185,13 +197,17 @@ void MessageView::onEnter() {
         refreshMessages();
         return;
     }
+#if HANDHELD_RRC_UI_ENABLED
     _rrcClient.bind(_backend,_store,&_readTicket);
+#endif
     _input.setMaxLength(DraftLength);
     _input.setSubmitCallback([this](const std::string&) { sendCurrentInput(); });
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcMode) {
         _input.setActive(_rrcLoaded && rrcWritable());_readRequested=false;
         enterRrcHistory();loadRrcDraft();return;
     }
+#endif
     _input.setActive(true);
     _sendNotice = _sendTicket.valid() && _retainedPeer == _peerHex &&
         identity.c_str() == _retainedIdentity ? "Saving message..." : nullptr;
@@ -209,7 +225,9 @@ void MessageView::onEnter() {
 }
 
 void MessageView::refreshMessages() {
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcMode) {if (_history.mode()==History::Mode::Closed) enterRrcHistory();else _history.refresh();_needsRefresh=false;return;}
+#endif
     if (!_lxmf || _peerHex.empty()) return;
     rs::Bytes peer; peer.assignHex(_peerHex.c_str());
     if (peer.size() != 16) return;
@@ -226,14 +244,19 @@ void MessageView::refreshMessages() {
 
 void MessageView::render(M5Canvas& canvas) {
     if(_messageTools.visible()) {renderMessageTools(canvas);return;}
+#if HANDHELD_RRC_UI_ENABLED
     if(_rrcMode && _rrcTools.visible()) {renderRrcTools(canvas);return;}
+#endif
     int baseY = Theme::CONTENT_Y;
     const int headerH=CHAT_HEADER_H+(_rrcMode?Theme::CHAR_H+2:0);
 
     // Header: peer name or hash.
     std::string header;
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcMode) header=_rrcBinding.room[0]?_rrcBinding.room:_rrcBinding.privateNotice()?"Private hub message":"Hub notices";
-    else if (_am) {
+    else
+#endif
+    if (_am) {
         const DiscoveredNode* node = _am->findNodeByHex(_peerHex);
         if (node && !node->name.empty()) header = node->name;
         if (header.empty()) header = _am->lookupName(_peerHex);
@@ -255,6 +278,7 @@ void MessageView::render(M5Canvas& canvas) {
                             "Status delayed; R retries" : "Status delayed; Tab, R") : header,
                     8, baseY + 2, Theme::CONTENT_W - (_rrcMode?16:108));
     if(!_rrcMode) {Theme::useSmallFont(canvas);canvas.setTextColor(Theme::ACCENT);canvas.drawString("Ctrl+V voice",164,baseY+3);}
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcMode && _backend) {
         const auto status=_backend->rrcStatus();
         const auto action=_rrcBinding.privateNotice()?handheld::rrc::Action::PrivateNotice:_rrcEmote?handheld::rrc::Action::Emote:handheld::rrc::Action::Message;
@@ -266,6 +290,7 @@ void MessageView::render(M5Canvas& canvas) {
         Theme::useSmallFont(canvas);canvas.setTextColor(Theme::TEXT_SECONDARY);
         drawFittedHeader(canvas,metadata,8,baseY+CHAT_HEADER_H,Theme::CONTENT_W-16);
     }
+#endif
     canvas.drawFastHLine(0, baseY + headerH, Theme::CONTENT_W, Theme::DIVIDER);
 
     Theme::useSmallFont(canvas);
@@ -275,21 +300,27 @@ void MessageView::render(M5Canvas& canvas) {
     const int maximum = std::max(0, totalChatLines(_history, _rrcMode, _memo) - visible);
     _history.setScrollOffset(_history.mode() == History::Mode::Chat && _history.followsNewest() ?
         uint32_t(maximum) : std::min(_history.scrollOffset(), uint32_t(maximum)));
+#if HANDHELD_RRC_UI_ENABLED
     size_t previousRow=SIZE_MAX;int previousLine=-1;
     auto viewedEnd=[&] {
         if (!_rrcMode || previousRow==SIZE_MAX || previousLine<int(_history.scrollOffset()) || previousLine>=int(_history.scrollOffset())+visible) return;
         const auto* row=_history.span(previousRow);
         if (row && !row->unavailable() && !row->more()) _rrcVisibleThrough=std::max(_rrcVisibleThrough,row->counter);
     };
+#endif
     visitChatLines(_history, _rrcMode, _memo, [&](size_t row, int line, const char* text, uint16_t color) {
+#if HANDHELD_RRC_UI_ENABLED
         if (row!=previousRow) viewedEnd();previousRow=row;previousLine=line;
+#endif
         if (line < int(_history.scrollOffset()) || line >= int(_history.scrollOffset()) + visible) return;
         const int y = chatY + (line - _history.scrollOffset()) * Theme::CHAR_H;
         if (_history.focusedSpan() == row && _history.mode() == History::Mode::Chat)
             canvas.fillRect(0, y, Theme::CONTENT_W, Theme::CHAR_H, Theme::SELECTION_BG);
         canvas.setTextColor(color); canvas.drawString(text, 2, y);
     });
+#if HANDHELD_RRC_UI_ENABLED
     viewedEnd();
+#endif
     if (!_history.spanCount() && !_history.queuedAudioSeconds()) {
         canvas.setTextColor(Theme::TEXT_SECONDARY);
         const char* text = _history.state() == History::State::Retrying ? "Read failed; retrying..." :
@@ -309,9 +340,11 @@ void MessageView::render(M5Canvas& canvas) {
         canvas.setTextColor(Theme::TEXT_SECONDARY);
         const auto* row=_history.span(_history.focusedSpan());
         canvas.drawString(_rrcMode?"Enter: actions  R: refresh":row && row->hasAudio()?"Enter: play/pause M: more":"Enter: actions Esc: back", 2, inputY + 2);
+#if HANDHELD_RRC_UI_ENABLED
     } else if (_rrcMode && (!rrcWritable() || !_rrcLoaded)) {
         canvas.setTextColor(Theme::TEXT_SECONDARY);
         canvas.drawString(!rrcWritable()?"Hub notices are read-only":"Loading draft...",2,inputY+2);
+#endif
     } else if (_draftReady) {
         _input.render(canvas, 0, inputY, Theme::CONTENT_W);
     } else {
@@ -340,6 +373,7 @@ bool MessageView::handleKey(const KeyEvent& event) {
         return true;
     }
     if(!_rrcMode && event.ctrl && (event.character=='v' || event.character=='V')) {if(!event.repeat && _voice)_voice(_peerHex.c_str(),0,false);return true;}
+#if HANDHELD_RRC_UI_ENABLED
     if(_rrcMode && _rrcTools.visible()) {
         if(event.escape || event.backspace) {if(!event.repeat) {_dismissedDelete=event.backspace;closeRrcTools();}return true;}
         if(event.up || event.left) {_rrcTools.move(-1);return true;}
@@ -347,6 +381,7 @@ bool MessageView::handleKey(const KeyEvent& event) {
         if(event.enter && !event.repeat) activateRrcTool();
         return true;
     }
+#endif
     const bool full = _history.mode() == History::Mode::Full;
     const auto* audioRow=_history.span(full?0:_history.focusedSpan());
     if(!_rrcMode && audioRow && !event.ctrl && !event.repeat && (event.character=='m' || event.character=='M')) {
@@ -410,14 +445,21 @@ bool MessageView::handleKey(const KeyEvent& event) {
         _history.refresh(); return true;
     }
     if(full) {
-        if(event.enter && !event.repeat) {if(_rrcMode) openRrcTools(0);else openMessageTools(0);}
+        if(event.enter && !event.repeat) {
+#if HANDHELD_RRC_UI_ENABLED
+            if(_rrcMode) openRrcTools(0);else
+#endif
+            openMessageTools(0);
+        }
         return true; // The reader never edits/sends a hidden composer.
     }
     if (_history.focusedSpan() < _history.spanCount()) {
         if (event.enter && !event.repeat) {
             const auto selected = _history.focusedSpan();
             if (_history.span(selected)->unavailable()) _history.refresh();
+#if HANDHELD_RRC_UI_ENABLED
             else if(_rrcMode) openRrcTools(selected);
+#endif
             else openMessageTools(selected);
             return true;
         }
@@ -429,16 +471,21 @@ bool MessageView::handleKey(const KeyEvent& event) {
         if (!event.repeat && _backCb) _backCb();
         return true;
     }
-    if (!_draftReady || (_rrcMode && (!_rrcLoaded || !rrcWritable()))) return true;
+    if (!_draftReady) return true;
+#if HANDHELD_RRC_UI_ENABLED
+    if (_rrcMode && (!_rrcLoaded || !rrcWritable())) return true;
     if (_rrcMode && event.ctrl && !event.repeat && (event.character=='e' || event.character=='E')) {
         if (_rrcBinding.privateNotice()) rrcNotice("Actions belong in channels");
         else { _rrcEmote=!_rrcEmote;rrcNotice(_rrcEmote?"ACTION mode; Ctrl+E returns to chat":"Message mode"); }
         return true;
     }
+#endif
     if (event.enter && event.repeat) return true; // Sending requires a new, explicit key press.
     const auto revision = _input.revision();
     if (_input.handleKey(event)) {
+#if HANDHELD_RRC_UI_ENABLED
         if (_rrcMode && _input.revision()!=revision) rrcEdited();
+#endif
         if (!_rrcMode && _input.revision() != revision && _peerHex == _retainedPeer && _backend &&
             _backend->destinationHashHex().c_str() == _retainedIdentity) {
             _submissionEdited = true; _retainedDraft = _input.getText();
@@ -477,7 +524,10 @@ bool MessageView::pollHistory(bool allowAdmission) {
         _history.observeHistoryRevision(_lxmf->historyRevision());
         if (_backend) _history.observeStatusRevision(_backend->lxmfStatusRevision());
     }
-    if (!_rrcHistory.pending()) handheld::canvas::pollStorageWindow(_history, *_lxmf, _backend, _visible && !_rrcMode, allowAdmission && !_rrcMode,
+#if HANDHELD_RRC_UI_ENABLED
+    if (!_rrcHistory.pending())
+#endif
+    handheld::canvas::pollStorageWindow(_history, *_lxmf, _backend, _visible && !_rrcMode, allowAdmission && !_rrcMode,
         [](const History::Query& query) {
             RecordKey key; memcpy(key.peer, query.peer, 16);
             key.counter = query.cursor.counter; key.incoming = query.cursor.incoming;
@@ -488,6 +538,7 @@ bool MessageView::pollHistory(bool allowAdmission) {
                 _lxmf->requestHistoryPage(_peerHex, query.cursor, query.direction) :
                 _lxmf->requestRecord(key, query.offset, query.capacity);
         });
+#if HANDHELD_RRC_UI_ENABLED
     if (_store) {
         handheld::storage::rrc::Context context;const auto rrcStatus=_backend?_backend->rrcStatus():handheld::rrc::Status{};
         const bool rrcVisible=_rrcMode && _visible && _backend && _backend->rrcContext(_rrcBinding.hub,_rrcBinding.room,
@@ -497,6 +548,7 @@ bool MessageView::pollHistory(bool allowAdmission) {
         }
         _rrcHistory.poll(_history,*_store,rrcVisible?&context:nullptr,rrcStatus.revision,millis(),allowAdmission);
     }
+#endif
     if(publication!=_history.revision() && _selectAfterPage) {_selectAfterPage=false;revealSelection();}
     // The previous bank also retains known delivery facts until the first
     // status projection/fallback finishes. Abandoned views can release now;
@@ -508,7 +560,9 @@ bool MessageView::pollHistory(bool allowAdmission) {
 }
 
 bool MessageView::pollReadMarker() {
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcClient.readingDraft()) return false;
+#endif
     if (!_lxmf) return false;
     bool changed = false;
     if (_readTicket.valid()) {
@@ -578,7 +632,9 @@ bool MessageView::pollSubmission() {
 }
 
 void MessageView::sendCurrentInput() {
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcMode) {sendRrcMessage();return;}
+#endif
     if (!_backend || !_lxmf || _peerHex.empty() || _sendTicket.valid() ||
         _input.revision() == UINT64_MAX) return;
     const auto& text = _input.getText();

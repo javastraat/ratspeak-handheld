@@ -809,9 +809,11 @@ void setup() {
     messagesScreen.setAddContactCallback([](const std::string& peerHex) {
         if (announceManager) announceManager->saveNode(peerHex);
     });
+#if HANDHELD_RRC_UI_ENABLED
     messagesScreen.setRrcOpenCallback([](const handheld::rrc::Conversation& binding,const char* insert) {
         if (messageView.setRrcConversation(binding,insert)) ui.setScreen(&messageView);
     });
+#endif
     messageView.setMessageStore(&messageStore);
     messageView.setLXMFManager(&lxmf);
     messageView.setBackend(backend);
@@ -829,6 +831,10 @@ void setup() {
     });
 
     settingsScreen.setUserConfig(&userConfig);
+    settingsScreen.setBackCallback([]() {
+        ui.tabBar().setActiveTab(TabBar::TAB_HOME);
+        ui.setScreen(&homeScreen);
+    });
     settingsScreen.setFlashStore(&flash);
     settingsScreen.setSDStore(&sdStore);
     settingsScreen.setRadioApply([](const UserSettings& settings, bool accepting) {
@@ -1010,7 +1016,9 @@ void loop() {
         rnsDuration = millis() - rnsStart;
     }
     if (backend->pollRadioBeforeBlockingWork() || messageStore.deferredIO()) {
+#if HANDHELD_RRC_UI_ENABLED
         if (messageView.pollRrc(maintenance.accepting())) ui.markContentDirty();
+#endif
         if (messageView.pollSubmission()) ui.markContentDirty();
         if (messageView.pollReadMarker()) ui.markContentDirty();
         if (settingsScreen.pollNetworkResults()) ui.markContentDirty();
@@ -1070,11 +1078,13 @@ void loop() {
     if (maintenance.accepting() && gps.isRunning()) gps.loop();
 #endif
 
+#if HANDHELD_RRC_UI_ENABLED
     // RRC publishes an alert only after a policy-eligible message commits.
     // Keep Direct's callback and the two histories independent.
     static uint32_t rrcAlertRevision=0;
     const auto rrcAlert=backend->rrcStatus().alertRevision;
     if(rrcAlertRevision!=rrcAlert) {rrcAlertRevision=rrcAlert;if(rrcAlert) pendingMessageSound=true;}
+#endif
     // 9. Deferred audio (from packet callbacks — delay() can't run in callbacks)
     if (pendingMessageSound) {
         pendingMessageSound = false;

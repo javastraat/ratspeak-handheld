@@ -4,6 +4,7 @@
 #include "widgets/ScrollList.h"
 #include "reticulum/LXMFManager.h"
 #include "history/ConversationWindow.h"
+#include "ui/FeatureAvailability.h"
 #include "ui/RrcBrowser.h"
 #include "widgets/TextInput.h"
 
@@ -27,7 +28,13 @@ public:
     // Callback to open a conversation
     using OpenConversationCb = std::function<void(const std::string& peerHex)>;
     void setOpenCallback(OpenConversationCb cb) { _openCb = cb; }
-    void setRrcOpenCallback(handheld::ui::RrcBrowser::Open cb) { _rrc.open = std::move(cb); }
+    void setRrcOpenCallback(handheld::ui::RrcBrowser::Open cb) {
+#if HANDHELD_RRC_UI_ENABLED
+        _rrc.open = std::move(cb);
+#else
+        (void)cb;
+#endif
+    }
 
     // Callback to add contact
     using AddContactCb = std::function<void(const std::string& peerHex)>;
@@ -39,6 +46,14 @@ public:
     bool pollDeletion();
 
 private:
+    bool directFamily() const {
+#if HANDHELD_RRC_UI_ENABLED
+        return _rrc.navigation.direct();
+#else
+        return true;
+#endif
+    }
+#if HANDHELD_RRC_UI_ENABLED
     void pollRrc();
     bool pollRrcCatalog();
     void renderRrc(M5Canvas&, int y);
@@ -51,6 +66,7 @@ private:
     uint32_t _rrcQueryView = 0, _rrcQuerySession = 0, _rrcQueryRevision = 0, _rrcQueryOffset = 0;
     handheld::ui::RrcNavigation::Page _rrcQueryPage = handheld::ui::RrcNavigation::Page::Channels;
     bool _rememberKey = false;
+#endif
     using Conversations = handheld::history::ConversationList;
     std::string peerHex(size_t index) const;
     std::string peerLabel(const std::string& peer) const;

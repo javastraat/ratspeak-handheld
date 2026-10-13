@@ -4,16 +4,21 @@
 #include "widgets/TextInput.h"
 #include "reticulum/LXMFManager.h"
 #include "protocol/OutgoingContract.h"
+#include "protocol/RrcTypes.h"
 #include "history/HistoryWindow.h"
+#include "ui/FeatureAvailability.h"
+#if HANDHELD_RRC_UI_ENABLED
 #include "RrcClient.h"
 #include "RrcHistoryAdapter.h"
 #include "ui/RrcMessageMenu.h"
+#endif
 #include "ui/MessageAudio.h"
 #include "ui/MessageMenu.h"
 #include <string>
 
 class AnnounceManager;
 class ProtocolBackend;
+class MessageStore;
 
 class MessageView : public Screen {
 public:
@@ -31,9 +36,20 @@ public:
     void setMessageStore(MessageStore* store) { _store = store; }
     void setAnnounceManager(AnnounceManager* am) { _am = am; }
     bool setPeerHex(const std::string& peerHex);
-    bool prepareMaintenance() { _rrcSendRequested=false;return leaveRrcDraft(); }
+    bool prepareMaintenance() {
+#if HANDHELD_RRC_UI_ENABLED
+        _rrcSendRequested=false;return leaveRrcDraft();
+#else
+        return true;
+#endif
+    }
+#if HANDHELD_RRC_UI_ENABLED
     bool setRrcConversation(const handheld::rrc::Conversation&, const char* insert = nullptr);
     bool pollRrc(bool allowAdmission = true);
+#else
+    bool setRrcConversation(const handheld::rrc::Conversation&, const char* = nullptr) { return false; }
+    bool pollRrc(bool = true) { return false; }
+#endif
     void notifyNewMessage(const handheld::storage::RecordKey&);
     // App-owned polling continues while this screen is hidden or powered off.
     bool pollSubmission();
@@ -52,6 +68,8 @@ public:
     void setUnreadUpdateCallback(UnreadUpdateCb cb) { _unreadCb = cb; }
 
 private:
+    MessageStore* _store = nullptr;
+#if HANDHELD_RRC_UI_ENABLED
     using RrcTools=handheld::ui::RrcMessageMenu;
     RrcTools _rrcTools;
     void openRrcTools(size_t index);
@@ -72,7 +90,6 @@ private:
     void rrcEdited();
     handheld::rrc::Command rrcCommand(handheld::rrc::Action) const;
     bool rrcWritable() const { return _rrcBinding.room[0] || _rrcBinding.privateNotice(); }
-    MessageStore* _store = nullptr;
     handheld::canvas::RrcClient _rrcClient;
     handheld::canvas::RrcHistoryAdapter _rrcHistory;
     handheld::rrc::Conversation _rrcBinding, _rrcSendingBinding;
@@ -84,6 +101,9 @@ private:
     bool _rrcMode = false, _rrcLoaded = false, _rrcLoading = false, _rrcSaving = false;
     bool _rrcEmote = false, _rrcUncertain = false, _rrcResendConfirmed = false;
     bool _rrcSendRequested = false, _rrcRequestedEmote = false, _rrcClearPending = false, _rrcClearing = false;
+#else
+    static constexpr bool _rrcMode = false;
+#endif
     void refreshMessages();
     void sendCurrentInput();
     bool prepareDraft(String& identity);

@@ -11,6 +11,11 @@ public:
     void addItem(const std::string& item);
     void addItem(const std::string& item, uint16_t color);
     void clear();
+    void release() {
+        clear();
+        std::vector<std::string>().swap(_items);
+        std::vector<uint16_t>().swap(_itemColors);
+    }
     void updateItem(size_t index, const std::string& item, uint16_t color);
 
     void render(M5Canvas& canvas, int x, int y, int w, int h, bool showSelection = true, bool compact = false);

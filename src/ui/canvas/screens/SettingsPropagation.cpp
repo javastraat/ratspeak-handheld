@@ -8,7 +8,7 @@ using namespace handheld::propagation;
 void SettingsScreen::buildPropagationMenu() {
     clearRows();
     if (!_config) return;
-    const auto& settings = _candidate.settings().propagation;
+    const auto& settings = settingsView().propagation;
     addRow(settings.enabled ? "Propagation: ON" : "Propagation: OFF", RowAction::Propagation, 0);
     addRow(settings.selection == Selection::Auto ? "Node mode: AUTO" : "Node mode: MANUAL", RowAction::Propagation, 1);
     addRow(settings.delivery == Delivery::Auto ? "Delivery AUTO: direct first" : "Delivery ALWAYS: relay only", RowAction::Propagation, 2);
@@ -26,7 +26,7 @@ void SettingsScreen::pollPropagationUI() {
     if (!_active) return;
     if (_propChoicePending && _config && !_config->settingsPending() && !_radioApplyPending) {
         _propChoicePending = false;
-        if (!_candidateDirty && _subMenu == MENU_PROPAGATION &&
+        if (!_candidate && _subMenu == MENU_PROPAGATION &&
             _config->settings().propagation.selection == Selection::Manual) showPropagationChoice();
     }
     if (_subMenu == MENU_PROPAGATION && !_editing && _backend &&
@@ -59,7 +59,7 @@ void SettingsScreen::showPropagationNodes() {
     for (size_t i = 0; i < _propCount; ++i) {
         char label[64], address[33]; Settings pin; pin.hasManual = true;
         memcpy(pin.manual, _propNodes[i].address, 16); pin.manualHex(address);
-        const auto& settings = _candidate.settings().propagation;
+        const auto& settings = settingsView().propagation;
         handheld::ui::propagationNodeTitle(_propNodes[i], settings.enabled && settings.selection == Selection::Auto,
             label, sizeof label);
         addRow(label, RowAction::Propagation, uint8_t(i * 2));
@@ -72,7 +72,8 @@ void SettingsScreen::showPropagationNodes() {
 
 bool SettingsScreen::savePropagationAddress(const uint8_t address[16]) {
     if (!_config || !address) return false;
-    auto& settings = _candidate.settings().propagation;
+    if (!ensureCandidate()) return false;
+    auto& settings = _candidate->settings().propagation;
     memcpy(settings.manual, address, 16); settings.hasManual = true; settings.selection = Selection::Manual;
     if (!applyAndSave()) return false;
     _subMenu = MENU_PROPAGATION; buildPropagationMenu();
@@ -82,7 +83,16 @@ bool SettingsScreen::savePropagationAddress(const uint8_t address[16]) {
 void SettingsScreen::activatePropagationRow(int row) {
     if (!_config || _config->settingsPending() || _radioApplyPending) return;
     if (_subMenu == MENU_PROPAGATION) {
-        auto& settings = _candidate.settings().propagation;
+        if (row == 4) { showPropagationChoice(); return; }
+        if (row == 6) {
+            const auto* feedback=!settingsView().propagation.enabled?"Enable propagation to sync":
+                !_backend?"Inbox unavailable; try again":_backend->propagationStatus().busy?"Inbox sync already running":
+                _backend->propagationSync()?"Sync requested":"Wait 30s, then sync again";
+            showToast(feedback,2500); return;
+        }
+        if (row != 0 && row != 1 && row != 2 && row != 5) return;
+        if (!ensureCandidate()) return;
+        auto& settings = _candidate->settings().propagation;
         if (row == 0) { settings.enabled = !settings.enabled; applyAndSave(); }
         else if (row == 1) {
             settings.selection = settings.selection == Selection::Auto ? Selection::Manual : Selection::Auto;
@@ -91,18 +101,11 @@ void SettingsScreen::activatePropagationRow(int row) {
         } else if (row == 2) {
             settings.delivery = settings.delivery == Delivery::Auto ? Delivery::Always : Delivery::Auto;
             applyAndSave();
-        } else if (row == 4) { showPropagationChoice(); return; }
-        else if (row == 5) { settings.setManual(nullptr, 0); applyAndSave(); }
-        else if (row == 6) {
-            const auto* feedback=!settings.enabled?"Enable propagation to sync":
-                !_backend?"Inbox unavailable; try again":_backend->propagationStatus().busy?"Inbox sync already running":
-                _backend->propagationSync()?"Sync requested":"Wait 30s, then sync again";
-            showToast(feedback,2500);
-        }
+        } else if (row == 5) { settings.setManual(nullptr, 0); applyAndSave(); }
         buildPropagationMenu(); _list.setSelected(row); pollPropagationUI();
     } else if (_subMenu == MENU_PROPAGATION_CHOICE) {
         if (row == 0) {
-            char address[33]; _candidate.settings().propagation.manualHex(address);
+            char address[33]; settingsView().propagation.manualHex(address);
             startEditing(0, address); _editLabel = "Node: 32 hexadecimal characters";
             _editInput.setMaxLength(32); _editInput.setNumericOnly(false);
         } else if (row == 1) showPropagationNodes();

@@ -25,6 +25,14 @@ public:
         for (size_t n = 0; n < _text.size(); ++n) bytes[n] = 0;
         clear();
     }
+    // Call after a submit callback returns, never from inside that callback.
+    void release() {
+        _active = false;
+        _submitCb = nullptr;
+        clearSensitive();
+        std::string().swap(_text);
+        _capacityLimit = 0;
+    }
     // Reserve before an owner admits work that requires retaining this text.
     // Existing field editors keep their ordinary length policy.
     bool reserveTextCapacity(size_t capacity);

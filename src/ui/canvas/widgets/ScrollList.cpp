@@ -36,11 +36,15 @@ void ScrollList::setItems(const std::vector<std::string>& items) {
 }
 
 void ScrollList::addItem(const std::string& item) {
-    _items.push_back(item);
-    _itemColors.push_back(0);
+    addItem(item, 0);
 }
 
 void ScrollList::addItem(const std::string& item, uint16_t color) {
+    // A refused row allocation must leave the text/color arrays aligned so
+    // callers can show an error and continue navigating the existing rows.
+    const size_t next = _items.size() + 1;
+    if (_items.capacity() < next) _items.reserve(std::max(next, _items.capacity() * 2));
+    if (_itemColors.capacity() < next) _itemColors.reserve(std::max(next, _itemColors.capacity() * 2));
     _items.push_back(item);
     _itemColors.push_back(color);
 }

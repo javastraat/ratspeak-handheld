@@ -13,6 +13,7 @@ namespace {
 constexpr int NavigationHeight = 18;
 }
 
+#if HANDHELD_RRC_UI_ENABLED
 void MessagesScreen::switchFamily() {
     if (!handheld::ui::RrcEnabled) return;
     exitContextMenu(); _rrc.navigation.direct(!_rrc.navigation.direct());
@@ -153,8 +154,11 @@ bool MessagesScreen::handleRrcKey(const KeyEvent& event) {
     return false;
 }
 
+#endif
+
 void MessagesScreen::onEnter() {
     _showingContext = false; _visible = true; _pageFocus = -1;
+#if HANDHELD_RRC_UI_ENABLED
     if (!handheld::ui::RrcEnabled) _rrc.navigation.direct(true);
     _rrc.visible(handheld::ui::RrcEnabled);
     _rrc.openDirect=[this](const char* peer) {if(_openCb) _openCb(peer);};
@@ -166,13 +170,17 @@ void MessagesScreen::onEnter() {
         if (!command.revision) return handheld::rrc::Code::Full;
         return _backend->rrcCommand(command,body,length);
     };
+#endif
     // Cardputer identity switches commit through an orderly restart.
-    if (_rrc.navigation.direct()) _conversations.resume(1);
+    if (directFamily()) _conversations.resume(1);
 }
 void MessagesScreen::onExit() {
-    _visible = false; _conversations.close(); _rrc.visible(false);
+    _visible = false; _conversations.close();
+#if HANDHELD_RRC_UI_ENABLED
+    _rrc.visible(false);
     // Secret forms never survive leaving the browser.
     _rrcInput.clearSensitive(); _rrcFormView = 0;
+#endif
 }
 
 std::string MessagesScreen::peerHex(size_t index) const {
@@ -198,9 +206,11 @@ std::string MessagesScreen::peerLabel(const std::string& peer) const {
 }
 
 bool MessagesScreen::pollConversations(bool allowAdmission) {
+#if HANDHELD_RRC_UI_ENABLED
     const auto rrcRevision = _rrc.revision();
     pollRrcCatalog();
     if (allowAdmission) pollRrc();
+#endif
     if (!_lxmf) return false;
     const auto publication = _conversations.revision(), statuses = _conversations.statusRevision();
     const auto state = _conversations.state(); const auto error = _conversations.error();
@@ -228,7 +238,11 @@ bool MessagesScreen::pollConversations(bool allowAdmission) {
         _pageFocus = pageEnabled(2) ? 2 : pageEnabled(1) ? 1 : -1;
     return publication != _conversations.revision() || statuses != _conversations.statusRevision() ||
         state != _conversations.state() || error != _conversations.error() || updated != _conversations.updated() ||
-        pageFocus != _pageFocus || rrcRevision != _rrc.revision();
+        pageFocus != _pageFocus
+#if HANDHELD_RRC_UI_ENABLED
+        || rrcRevision != _rrc.revision()
+#endif
+        ;
 }
 
 void MessagesScreen::renderList(M5Canvas& canvas, int y, int height) {
@@ -320,7 +334,9 @@ void MessagesScreen::executeContextAction() {
 }
 
 bool MessagesScreen::pollDeletion() {
+#if HANDHELD_RRC_UI_ENABLED
     if (_rrcQueryView) return pollRrcCatalog();
+#endif
     if (!_deleteTicket.valid()) {
         if (_deleteNotice && uint32_t(millis() - _deleteNoticeSince) >= 4000) {
             _deleteNotice = nullptr;
@@ -360,11 +376,13 @@ void MessagesScreen::render(M5Canvas& canvas) {
     canvas.fillRect(0, y + 2, 3, headerH - 4, Theme::ACCENT);
     canvas.setTextColor(Theme::ACCENT);
     Theme::useUiFont(canvas);
+#if HANDHELD_RRC_UI_ENABLED
     if (!_rrc.navigation.direct()) {
         canvas.drawString((std::string("Direct  |  [") + _rrc.navigation.secondLabel() + "]   Tab").c_str(),8,y+2);
         canvas.drawFastHLine(0,y+headerH,Theme::CONTENT_W,Theme::DIVIDER);
         renderRrc(canvas,y+headerH+2); return;
     }
+#endif
     bool unavailable = false;
     for (size_t i = 0; i < _conversations.count(); ++i)
         unavailable |= bool(_conversations.row(i)->flags & handheld::storage::ConversationView::Unavailable);
@@ -372,7 +390,11 @@ void MessagesScreen::render(M5Canvas& canvas) {
         unavailable || _conversations.state() == Conversations::State::Retrying ? "Read failed; R to retry" :
         _conversations.statusRefreshDelayed() ? "Status refresh delayed (R)" :
         nullptr;
-    const auto heading = notice ? std::string(notice) : handheld::ui::RrcEnabled ? std::string("[Direct]  |  ") + _rrc.navigation.secondLabel() + "   Tab" : std::string("Chats");
+#if HANDHELD_RRC_UI_ENABLED
+    const auto heading = notice ? std::string(notice) : std::string("[Direct]  |  ") + _rrc.navigation.secondLabel() + "   Tab";
+#else
+    const auto heading = notice ? std::string(notice) : std::string("Chats");
+#endif
     canvas.drawString(heading.c_str(), 8, y + 2);
     canvas.drawFastHLine(0, y + headerH, Theme::CONTENT_W, Theme::DIVIDER);
     y += headerH + 2;
@@ -421,8 +443,10 @@ void MessagesScreen::movePageFocus(int direction) {
 }
 
 bool MessagesScreen::handleKey(const KeyEvent& event) {
+#if HANDHELD_RRC_UI_ENABLED
     if (event.tab && !event.repeat && !_rrc.form() && !_showingContext) { switchFamily(); return true; }
     if (!_rrc.navigation.direct()) return handleRrcKey(event);
+#endif
     if (event.repeat && (event.backspace || event.forwardDelete)) return true;
     if (_showingContext) {
         if (event.escape || event.backspace) {

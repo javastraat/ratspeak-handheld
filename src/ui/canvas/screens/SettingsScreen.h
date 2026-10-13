@@ -16,6 +16,7 @@
 #include "protocol/ProtocolBackend.h"
 #include "runtime/ServiceMessages.h"
 #include <vector>
+#include <optional>
 
 class SettingsScreen : public Screen {
 public:
@@ -25,7 +26,7 @@ public:
     void onEnter() override;
     void onExit() override;
 
-    void setUserConfig(UserConfig* cfg) { _config = cfg; _candidateReady = cfg && _candidate.tryAssign(*cfg); _candidateDirty = false; }
+    void setUserConfig(UserConfig* cfg) { releaseCandidate(); _config = cfg; }
     void setFlashStore(FlashStore* flash) { _flash = flash; }
     void setSDStore(SDStore* sd) { _sdStore = sd; }
     using RadioApplyCallback = RadioApply (*)(const UserSettings&, bool);
@@ -122,7 +123,7 @@ private:
     bool pollWiFiStatus();
     void activateWiFiAction();
 
-    void addTCPConnection(const std::string& host, uint16_t port);
+    bool addTCPConnection(const std::string& host, uint16_t port);
     void toggleTCPConnection(int index);
     void removeTCPConnection(int index);
 
@@ -130,6 +131,10 @@ private:
     void commitEdit(const std::string& value);
     std::string getCurrentValue(SubMenu menu, int field);
     bool applyAndSave();
+    const UserSettings& settingsView() const;
+    bool ensureCandidate();
+    void releaseCandidate();
+    void releaseEditor();
     void applyRadioPreset(int preset);
     void finishRadioApply(RadioApply result);
     void factoryReset();
@@ -137,8 +142,9 @@ private:
     void showToast(const char* msg, unsigned long durationMs = 1500);
 
     UserConfig* _config = nullptr;
-    UserConfig _candidate;
-    bool _candidateReady = false, _candidateDirty = false;
+    // A full checked copy exists only while attempting a mutation. Opening or
+    // browsing Settings never competes with the protocol for another snapshot.
+    std::optional<UserConfig> _candidate;
     FlashStore* _flash = nullptr;
     SDStore* _sdStore = nullptr;
     RadioApplyCallback _radioApply = nullptr;
