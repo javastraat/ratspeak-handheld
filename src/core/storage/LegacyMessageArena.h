@@ -9,8 +9,8 @@
 namespace handheld::storage {
 
 // Cardputer reserves this block during setup, before the worker and networking
-// start. Its lifetime is the whole boot. Display pixels stay independently
-// owned so slow legacy reads/writes never prevent the UI from drawing.
+// start. Normal/legacy documents and key persistence share it under the storage
+// lease. Display pixels stay independent so slow I/O never prevents drawing.
 class LegacyMessageArena {
 public:
     bool reserve() {
@@ -27,8 +27,8 @@ public:
     }
     bool available() const { return _memory != nullptr; }
     void* borrow() {
-        // The storage executor is sequential. Refuse a nested live document
-        // instead of overwriting its bytes or waiting for itself to finish.
+        // Callers hold StorageLease before borrowing. Refuse nested/reentrant
+        // use instead of overwriting live bytes or waiting for ourselves.
         if (!_memory || _borrowed.test_and_set(std::memory_order_acquire)) return nullptr;
         return _memory;
     }
@@ -43,5 +43,19 @@ inline LegacyMessageArena& legacyMessageArena() {
     static LegacyMessageArena arena;
     return arena;
 }
+
+// For synchronous non-document users. Declare after StorageLease so the
+// scratch is returned before unlocking, including on exceptions/early returns.
+class LegacyMessageBorrow {
+public:
+    explicit LegacyMessageBorrow(bool acquire = true)
+        : _memory(acquire ? legacyMessageArena().borrow() : nullptr) {}
+    ~LegacyMessageBorrow() { if (_memory) legacyMessageArena().release(); }
+    LegacyMessageBorrow(const LegacyMessageBorrow&) = delete;
+    LegacyMessageBorrow& operator=(const LegacyMessageBorrow&) = delete;
+    void* data() const { return _memory; }
+private:
+    void* _memory;
+};
 
 } // namespace handheld::storage

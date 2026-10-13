@@ -35,20 +35,23 @@ public:
     static void cleanupLegacyFiles(FlashStore* flash, SDStore* sd);
 
 private:
-    bool restore(uint64_t nowMs);
-    bool migrateJson(uint64_t nowMs);
-    bool persist(uint64_t nowMs);
-    bool persistCosts();
+    bool restore(uint64_t nowMs, uint8_t* bytes, size_t capacity);
+    bool migrateJson(uint64_t nowMs, uint8_t* bytes, size_t capacity);
+    bool persist(uint64_t nowMs, uint8_t* bytes, size_t capacity);
+    bool persistCosts(uint8_t* bytes, size_t capacity);
 
     FlashStore* _flash = nullptr;
     rs_handheld_rns_t* _ctx = nullptr;
-    std::vector<uint8_t> _blob;
-    bool _dirty = false;
+    std::vector<uint8_t> _blob; // Guaranteed fallback on unreserved boards.
+    bool _dirty = false, _sharedScratch = false;
+    // Last actual I/O attempts; a refused storage lease has its shorter retry.
     uint64_t _lastSaveMs = 0;
     uint64_t _lastCostSaveMs = 0;
+    uint64_t _lastBorrowAttemptMs = 0;
     handheld::propagation::RecipientStampCosts _costs;
 
     static constexpr uint64_t SAVE_INTERVAL_MS = 60000;
+    static constexpr uint64_t BUSY_RETRY_MS = 1000;
     static constexpr size_t SMALL_BLOB_MAX = RS_HANDHELD_KNOWN_DESTINATIONS_BLOB_MAX;
     static constexpr size_t MICRO_BLOB_MAX = 7 + 64 * 88;
     static constexpr const char* PATH_BLOB = "/transport/known_dests.bin";

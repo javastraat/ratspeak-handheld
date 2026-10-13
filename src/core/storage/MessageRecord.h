@@ -183,9 +183,9 @@ private:
     bool _failed = false;
 };
 
-// One bounded document at a time. Normal records first try the approved owned
-// JSON allocation cap. Exceptional existing records may retry by streaming into
-// the reserved legacy arena. The input/output file is never retained as String.
+// One bounded document at a time. Reserved storage supplies both the normal
+// logical JSON cap and exceptional legacy retry, without a second heap arena.
+// Boards without a reservation retain the owned allocation path.
 class MessageDocument {
 public:
     MessageDocument() : _normal(0) { normal(); }
@@ -195,6 +195,7 @@ public:
     JsonDocument& document() { return *_document; }
     const TimestampToken& timestampToken() const { return _timestamp; }
     bool exceptional() const { return _exceptional; }
+    bool available() const { return _memory != nullptr; }
     void reset() {
         _document.reset(); _arena.reset();
         if (_borrowed) legacyMessageArena().release();
@@ -204,13 +205,17 @@ public:
     void normal() {
         _timestamp = {};
         _document.reset(); _arena.reset();
-        if (_exceptional) {
-            if (_borrowed) legacyMessageArena().release();
-            else freeAlignedStorage(_memory);
-            _memory = nullptr; _borrowed = false;
+        if (_exceptional && !_borrowed) {
+            freeAlignedStorage(_memory);
+            _memory = nullptr;
         }
         _exceptional = false;
-        if (!_memory) _memory = allocateAlignedStorage(Budget::JsonAllocator);
+        if (!_memory) {
+            if (legacyMessageArena().available()) {
+                _memory = legacyMessageArena().borrow();
+                _borrowed = _memory != nullptr;
+            } else _memory = allocateAlignedStorage(Budget::JsonAllocator);
+        }
         if (_memory) {
             _arena.emplace(_memory, Budget::JsonAllocator); _document.emplace(&*_arena);
         } else _document.emplace(&_normal); // zero-budget allocator reports failure
@@ -227,13 +232,16 @@ public:
         }
         if (reader.failed()) return Error::Read;
         if (error != DeserializationError::NoMemory) return Error::InvalidRecord;
-        reset();
-        if (legacyMessageArena().available()) {
-            // Already reserved before networking/worker startup. Do not charge
-            // the same block to a second free-heap admission check.
-            _memory = legacyMessageArena().borrow();
-            _borrowed = _memory != nullptr;
-        } else {
+        // Keep exclusive ownership while rebuilding the allocator with the
+        // larger legacy capacity. No live document/source may alias this reset.
+        _document.reset(); _arena.reset();
+        if (!_borrowed) {
+            freeAlignedStorage(_memory); _memory = nullptr;
+            // A reserved block denied to this document is still owned by its
+            // caller; never allocate around or wait on that contention.
+            if (legacyMessageArena().available()) {
+                _document.emplace(&_normal); return Error::Allocation;
+            }
             if (!Budget::canReserveLegacy(ESP.getFreeHeap(), ESP.getMaxAllocHeap())) {
                 _document.emplace(&_normal); return Error::Allocation;
             }
@@ -335,6 +343,11 @@ public:
         measure();
     }
     explicit JsonSource(MessageDocument& document) : _document(document.document()), _retained(&document.timestampToken()) {
+        // Direct marker writers also use this source, without commit()'s
+        // schema check. Never persist a partial/null marker after refusal.
+        if (!document.available() || document.document().overflowed()) {
+            _error = Error::Allocation; return;
+        }
         measure();
     }
     Error error() const { return _error; }

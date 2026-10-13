@@ -41,7 +41,9 @@ void MessageTransactions::eraseRecord(const Request& request,Result& result) {
     if(header.revision<request.offset || memcmp(header.incoming?header.destination:header.source,request.source,16)) {
         result.error=Error::Stale;return;
     }
-    bool other=false;Cursor cursor;beginRecords(cursor,request.key.peer);RecordKey key;
+    // Header fields above are copied; reuse the document for the cutoff marker
+    // instead of holding two parser arenas during individual deletion.
+    bool other=false;Cursor cursor;beginRecords(cursor,request.key.peer,&document);RecordKey key;
     while(nextRecord(cursor,key)) if(key.counter!=request.key.counter || key.incoming!=request.key.incoming) {other=true;break;}
     if(cursor.error!=Error::None) {result.error=cursor.error;return;}
     uint8_t marker[DeletedRecordBytes]{};memcpy(marker,"DEL1",4);
