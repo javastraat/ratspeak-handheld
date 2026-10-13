@@ -394,6 +394,120 @@ bool UserConfig::parseJson(const char* json, size_t length, bool persisted, bool
     } catch (const std::bad_alloc&) { return memoryFailure(); }
 }
 
+void UserConfig::writeJson(handheld::config::JsonWriter& writer, bool persisted) const {
+    writer.object();
+    writer.member("radio_region", _settings.radioRegion);
+    writer.member("lora_freq", _settings.loraFrequency);
+    writer.member("lora_sf", _settings.loraSF);
+    writer.member("lora_bw", _settings.loraBW);
+    writer.member("lora_cr", _settings.loraCR);
+    writer.member("lora_txp", _settings.loraTxPower);
+    writer.member("lora_pre", _settings.loraPreamble);
+    writer.member("lora_on", _settings.loraEnabled);
+
+    writer.member("wifi_mode", (int)_settings.wifiMode);
+    writer.member("wifi_restore_mode", (int)_settings.wifiRestoreMode);
+    writer.member("wifi_ap_ssid", _settings.wifiAPSSID);
+    writer.member("wifi_ap_pass", _settings.wifiAPPassword);
+    writer.member("wifi_sta_selected", (int)constrain((int)_settings.wifiSTASelected, 0, (int)WIFI_STA_MAX_NETWORKS - 1));
+    writer.array("wifi_sta_networks");
+    for (size_t slot = 0; slot < WIFI_STA_MAX_NETWORKS; slot++) {
+        writer.object();
+        if (slot < _settings.wifiSTANetworks.size()) {
+            writer.member("ssid", _settings.wifiSTANetworks[slot].ssid);
+            writer.member("pass", _settings.wifiSTANetworks[slot].password);
+        } else {
+            writer.member("ssid", "");
+            writer.member("pass", "");
+        }
+        writer.endObject();
+    }
+
+    writer.endArray();
+
+    writer.member("autoiface_en", _settings.autoIfaceEnabled);
+    writer.member("autoiface_group", _settings.autoIfaceGroupId);
+    writer.member("autoiface_max", _settings.autoIfaceMaxPeers);
+
+    writer.array("tcp_connections");
+    for (auto& ep : _settings.tcpConnections) {
+        writer.object();
+        writer.member("host", ep.host);
+        writer.member("port", ep.port);
+        writer.member("auto", ep.autoConnect);
+        writer.endObject();
+    }
+
+    writer.endArray();
+
+    writer.member("screen_dim", _settings.screenDimTimeout);
+    writer.member("screen_off", _settings.screenOffTimeout);
+    writer.member("brightness", _settings.brightness);
+    writer.member("dense_font", _settings.denseFontMode);
+    writer.member("theme_light", _settings.themeLight);
+    writer.member("kb_brightness", _settings.keyboardBrightness);
+    writer.member("kb_auto_on", _settings.keyboardAutoOn);
+    writer.member("kb_auto_off", _settings.keyboardAutoOff);
+    writer.member("trackball_speed", _settings.trackballSpeed);
+    writer.member("touch_sens", _settings.touchSensitivity);
+    writer.member("ble_enabled", false);
+
+    // battery settings
+    writer.member("batt_display", _settings.batteryDisplay);
+    writer.member("batt_model", _settings.batteryModel);
+    writer.member("charge_thresh_v", _settings.chargeThresholdV);
+    writer.member("full_battery_v", _settings.fullBatteryV);
+
+    writer.member("gps_time", _settings.gpsTimeEnabled);
+    writer.member("gps_location", _settings.gpsLocationEnabled);
+    writer.member("tz_idx", _settings.timezoneIdx);
+    writer.member("tz_set", _settings.timezoneSet);
+    writer.member("time_24h", _settings.use24HourTime);
+
+    writer.member("audio_on", _settings.audioEnabled);
+    writer.member("audio_vol", _settings.audioVolume);
+
+    writer.member("display_name", _settings.displayName);
+    writer.member("name_complete", _settings.nameComplete);
+    if (persisted && _nameBound) {
+        static constexpr char digits[] = "0123456789abcdef";
+        char hex[33]{};
+        for (size_t i = 0; i < 16; ++i) { hex[2*i] = digits[_nameIdentity[i] >> 4]; hex[2*i+1] = digits[_nameIdentity[i] & 15]; }
+        writer.member("name_identity", hex);
+        writer.member("name_pending", _namePending);
+    }
+    writer.member("sd_storage", _settings.sdStorageEnabled);
+    writer.member("announce_int", _settings.announceInterval);
+    writer.member("dev_mode", _settings.devMode);
+    writer.member("voice_on", _settings.voice.enabled);
+    writer.member("voice_contacts", _settings.voice.contactsOnly);
+    writer.member("voice_volume", _settings.voice.volume);
+    writer.member("voice_max_messages", _settings.voice.maxMessages);
+    writer.member("voice_route", uint8_t(_settings.voice.route));
+    writer.member("prop_on", _settings.propagation.enabled);
+    writer.member("prop_select", static_cast<uint8_t>(_settings.propagation.selection));
+    writer.member("prop_delivery", static_cast<uint8_t>(_settings.propagation.delivery));
+    char propagationNode[33]{};
+    _settings.propagation.manualHex(propagationNode);
+    writer.member("prop_node", propagationNode);
+    writer.endObject();
+}
+
+UserConfig::SaveResult UserConfig::prepareJson(bool persisted, size_t limit, size_t& length) {
+    length = 0;
+    sanitizeSettings(_settings);
+    if (!_settings.propagation.valid() || _settings.voice.volume > 100 ||
+        uint8_t(_settings.voice.route) > 2 || _settings.voice.maxMessages < 1 ||
+        _settings.voice.maxMessages > 50) return SaveResult::Invalid;
+    if (!handheld::config::Memory::admits(0)) return SaveResult::NoMemory;
+    handheld::config::JsonWriter measured(limit);
+    writeJson(measured, persisted);
+    if (measured.unavailable() || !handheld::config::Memory::admits(0)) return SaveResult::NoMemory;
+    if (!measured.ok() || !measured.size()) return SaveResult::Invalid;
+    length = measured.size();
+    return SaveResult::Complete;
+}
+
 String UserConfig::serializeToJson(bool persisted, size_t limit, bool* unavailable) {
     if (unavailable) *unavailable = false;
     const auto memoryFailure = [unavailable]() {
@@ -402,120 +516,39 @@ String UserConfig::serializeToJson(bool persisted, size_t limit, bool* unavailab
             unsigned(ESP.getFreeHeap()), unsigned(ESP.getMaxAllocHeap()));
         return String();
     };
-    sanitizeSettings(_settings);
-    if (!_settings.propagation.valid() || _settings.voice.volume > 100 ||
-        uint8_t(_settings.voice.route) > 2 || _settings.voice.maxMessages < 1 ||
-        _settings.voice.maxMessages > 50) return "";
-    const auto write = [&](handheld::config::JsonWriter& writer) {
-        writer.object();
-        writer.member("radio_region", _settings.radioRegion);
-        writer.member("lora_freq", _settings.loraFrequency);
-        writer.member("lora_sf", _settings.loraSF);
-        writer.member("lora_bw", _settings.loraBW);
-        writer.member("lora_cr", _settings.loraCR);
-        writer.member("lora_txp", _settings.loraTxPower);
-        writer.member("lora_pre", _settings.loraPreamble);
-        writer.member("lora_on", _settings.loraEnabled);
-
-        writer.member("wifi_mode", (int)_settings.wifiMode);
-        writer.member("wifi_restore_mode", (int)_settings.wifiRestoreMode);
-        writer.member("wifi_ap_ssid", _settings.wifiAPSSID);
-        writer.member("wifi_ap_pass", _settings.wifiAPPassword);
-        writer.member("wifi_sta_selected", (int)constrain((int)_settings.wifiSTASelected, 0, (int)WIFI_STA_MAX_NETWORKS - 1));
-        writer.array("wifi_sta_networks");
-        for (size_t slot = 0; slot < WIFI_STA_MAX_NETWORKS; slot++) {
-            writer.object();
-            if (slot < _settings.wifiSTANetworks.size()) {
-                writer.member("ssid", _settings.wifiSTANetworks[slot].ssid);
-                writer.member("pass", _settings.wifiSTANetworks[slot].password);
-            } else {
-                writer.member("ssid", "");
-                writer.member("pass", "");
-            }
-            writer.endObject();
-        }
-
-        writer.endArray();
-
-        writer.member("autoiface_en", _settings.autoIfaceEnabled);
-        writer.member("autoiface_group", _settings.autoIfaceGroupId);
-        writer.member("autoiface_max", _settings.autoIfaceMaxPeers);
-
-        writer.array("tcp_connections");
-        for (auto& ep : _settings.tcpConnections) {
-            writer.object();
-            writer.member("host", ep.host);
-            writer.member("port", ep.port);
-            writer.member("auto", ep.autoConnect);
-            writer.endObject();
-        }
-
-        writer.endArray();
-
-        writer.member("screen_dim", _settings.screenDimTimeout);
-        writer.member("screen_off", _settings.screenOffTimeout);
-        writer.member("brightness", _settings.brightness);
-        writer.member("dense_font", _settings.denseFontMode);
-        writer.member("theme_light", _settings.themeLight);
-        writer.member("kb_brightness", _settings.keyboardBrightness);
-        writer.member("kb_auto_on", _settings.keyboardAutoOn);
-        writer.member("kb_auto_off", _settings.keyboardAutoOff);
-        writer.member("trackball_speed", _settings.trackballSpeed);
-        writer.member("touch_sens", _settings.touchSensitivity);
-        writer.member("ble_enabled", false);
-
-        // battery settings
-        writer.member("batt_display", _settings.batteryDisplay);
-        writer.member("batt_model", _settings.batteryModel);
-        writer.member("charge_thresh_v", _settings.chargeThresholdV);
-        writer.member("full_battery_v", _settings.fullBatteryV);
-
-        writer.member("gps_time", _settings.gpsTimeEnabled);
-        writer.member("gps_location", _settings.gpsLocationEnabled);
-        writer.member("tz_idx", _settings.timezoneIdx);
-        writer.member("tz_set", _settings.timezoneSet);
-        writer.member("time_24h", _settings.use24HourTime);
-
-        writer.member("audio_on", _settings.audioEnabled);
-        writer.member("audio_vol", _settings.audioVolume);
-
-        writer.member("display_name", _settings.displayName);
-        writer.member("name_complete", _settings.nameComplete);
-        if (persisted && _nameBound) {
-            static constexpr char digits[] = "0123456789abcdef";
-            char hex[33]{};
-            for (size_t i = 0; i < 16; ++i) { hex[2*i] = digits[_nameIdentity[i] >> 4]; hex[2*i+1] = digits[_nameIdentity[i] & 15]; }
-            writer.member("name_identity", hex);
-            writer.member("name_pending", _namePending);
-        }
-        writer.member("sd_storage", _settings.sdStorageEnabled);
-        writer.member("announce_int", _settings.announceInterval);
-        writer.member("dev_mode", _settings.devMode);
-        writer.member("voice_on", _settings.voice.enabled);
-        writer.member("voice_contacts", _settings.voice.contactsOnly);
-        writer.member("voice_volume", _settings.voice.volume);
-        writer.member("voice_max_messages", _settings.voice.maxMessages);
-        writer.member("voice_route", uint8_t(_settings.voice.route));
-        writer.member("prop_on", _settings.propagation.enabled);
-        writer.member("prop_select", static_cast<uint8_t>(_settings.propagation.selection));
-        writer.member("prop_delivery", static_cast<uint8_t>(_settings.propagation.delivery));
-        char propagationNode[33]{};
-        _settings.propagation.manualHex(propagationNode);
-        writer.member("prop_node", propagationNode);
-        writer.endObject();
-    };
-    handheld::config::JsonWriter measured(limit);
-    write(measured);
-    if (measured.unavailable()) return memoryFailure();
-    if (!measured.ok() || !measured.size()) return "";
+    size_t length = 0;
+    const auto prepared = prepareJson(persisted, limit, length);
+    if (prepared == SaveResult::NoMemory) return memoryFailure();
+    if (prepared != SaveResult::Complete) return "";
     String json;
-    if (!handheld::config::Memory::reserveString(json, measured.size())) return memoryFailure();
-    handheld::config::JsonWriter output(measured.size(), &json);
-    write(output);
+    if (!handheld::config::Memory::reserveString(json, length)) return memoryFailure();
+    handheld::config::JsonWriter output(length, &json);
+    writeJson(output, persisted);
     if (output.unavailable()) return memoryFailure();
-    if (!output.ok() || output.size() != measured.size() || json.length() != measured.size()) return "";
+    if (!output.ok() || output.size() != length || json.length() != length) return "";
     return json;
 }
+
+// The caller sanitizes and measures before making the publication copy. This
+// synchronous source borrows those fixed values through write and readback;
+// neither emission mutates settings or retains a complete encoded record.
+class UserConfig::JsonSource final : public handheld::storage::AtomicSource {
+public:
+    JsonSource(const UserConfig& config, size_t length) : _config(config), _length(length) {}
+    size_t length() const override { return _length; }
+    bool unavailable() const { return _unavailable; }
+    bool emit(handheld::storage::ByteSink& sink) const override {
+        if (!handheld::config::Memory::admits(0)) { _unavailable = true; return false; }
+        handheld::config::JsonWriter writer(_length, sink);
+        _config.writeJson(writer, true);
+        _unavailable = _unavailable || writer.unavailable() || !handheld::config::Memory::admits(0);
+        return !_unavailable && writer.ok() && writer.size() == _length;
+    }
+private:
+    const UserConfig& _config;
+    size_t _length;
+    mutable bool _unavailable = false;
+};
 
 bool UserConfig::load(FlashStore& flash) {
     _recoveryRequired = false;
@@ -552,13 +585,27 @@ bool UserConfig::load(FlashStore& flash) {
 }
 
 bool UserConfig::saveRequired(FlashStore& flash) {
-    return saveRequired(flash, serializeToJson());
+    size_t length = 0;
+    const auto prepared = prepareJson(true, StoredLimit, length);
+    if (prepared == SaveResult::NoMemory) saveMemoryFailure("prepare", length);
+    return prepared == SaveResult::Complete && savePrepared(flash, length) == SaveResult::Complete;
 }
 
-bool UserConfig::saveRequired(FlashStore& flash, const String& json) {
-    if (json.isEmpty() || _recoveryRequired || !flash.writeString(PATH_USER_CONFIG, json)) return false;
+UserConfig::SaveResult UserConfig::saveMemoryFailure(const char* phase, size_t length) {
+    Serial.printf("[CONFIG] %s memory unavailable: free=%u largest=%u bytes=%u\n",
+        phase, unsigned(ESP.getFreeHeap()), unsigned(ESP.getMaxAllocHeap()), unsigned(length));
+    return SaveResult::NoMemory;
+}
+
+UserConfig::SaveResult UserConfig::savePrepared(FlashStore& flash, size_t length) {
+    if (!length || length > StoredLimit || _recoveryRequired) return SaveResult::Invalid;
+    if (!handheld::config::Memory::admits(0)) return saveMemoryFailure("write", length);
+    const JsonSource source(*this, length);
+    const auto result = flash.writeAtomic(PATH_USER_CONFIG, source);
+    if (source.unavailable()) return saveMemoryFailure("write", length);
+    if (result != handheld::storage::Error::None) return SaveResult::StorageError;
     _source = Source::Flash;
-    return true;
+    return SaveResult::Complete;
 }
 
 bool UserConfig::save(FlashStore& flash) {

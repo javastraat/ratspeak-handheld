@@ -14,6 +14,8 @@
 #include "config/PropagationSettings.h"
 #include "voice/VoiceTypes.h"
 
+namespace handheld::config { class JsonWriter; }
+
 enum RatWiFiMode : uint8_t { RAT_WIFI_OFF = 0, RAT_WIFI_AP = 1, RAT_WIFI_STA = 2 };
 
 struct WiFiNetwork {
@@ -187,8 +189,13 @@ private:
     bool parseJson(const String& json, bool persisted = true, bool* unavailable = nullptr);
     bool parseJson(const char* json, size_t length, bool persisted = true, bool* unavailable = nullptr);
     String serializeToJson(bool persisted = true, size_t limit = StoredLimit, bool* unavailable = nullptr);
+    void writeJson(handheld::config::JsonWriter&, bool persisted) const;
+    enum class SaveResult : uint8_t { Complete, Invalid, NoMemory, StorageError };
+    static SaveResult saveMemoryFailure(const char* phase, size_t length);
+    SaveResult prepareJson(bool persisted, size_t limit, size_t& length);
+    class JsonSource;
     bool saveRequired(FlashStore& flash);
-    bool saveRequired(FlashStore& flash, const String& encoded);
+    SaveResult savePrepared(FlashStore& flash, size_t length);
     void copyStateFrom(const UserConfig& source) noexcept;
     uint8_t _nameIdentity[16]{};
     bool _nameBound = false;

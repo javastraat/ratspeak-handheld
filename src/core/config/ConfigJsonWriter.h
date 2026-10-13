@@ -1,17 +1,20 @@
 #pragma once
 
 #include "ConfigMemory.h"
+#include "storage/AtomicStream.h"
 #include <cstring>
 
 namespace handheld::config {
 
-// Count first, then write into one pre-reserved String. Serialize only the
-// current value through ArduinoJson, never a second tree of every setting.
+// Count first, then write to a pre-reserved snapshot String or the atomic file
+// sink. Serialize only the current value, never a tree of every setting.
 // This keeps JSON escaping/number formatting identical to the reader's library.
 class JsonWriter {
 public:
     explicit JsonWriter(size_t limit, String* output = nullptr)
         : _limit(limit), _output(output) {}
+    JsonWriter(size_t limit, storage::ByteSink& output)
+        : _limit(limit), _sink(&output) {}
 
     template<typename T> void member(const char* key, const T& value) {
         prefix(key); scalar(value);
@@ -30,6 +33,9 @@ public:
         if (length > _limit - _size) { _ok = false; return 0; }
         if (_output && !_output->concat(reinterpret_cast<const char*>(bytes), length)) {
             _ok = false; _unavailable = true; return 0;
+        }
+        if (_sink && _sink->write(bytes, length) != length) {
+            _ok = false; return 0;
         }
         _size += length;
         return length;
@@ -71,7 +77,8 @@ private:
     }
     static constexpr size_t UserValueLimit = 65536;
     size_t _limit, _size = 0;
-    String* _output;
+    String* _output = nullptr;
+    storage::ByteSink* _sink = nullptr;
     bool _members[3]{};
     size_t _depth = 0;
     bool _ok = true, _unavailable = false;

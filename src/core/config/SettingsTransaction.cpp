@@ -106,13 +106,19 @@ SettingsTransaction::Result SettingsTransaction::apply(UserConfig& effective, Us
         candidate.settings().nameComplete != slot.nameComplete;
     UserConfig publication;
     {
-        bool unavailable = false;
-        const String json = candidate.serializeToJson(true, PersistedLimit, &unavailable);
-        if (unavailable) return NoMemory;
-        if (json.isEmpty() || json.length() > PersistedLimit)
+        size_t length = 0;
+        const auto prepared = candidate.prepareJson(true, PersistedLimit, length);
+        if (prepared == UserConfig::SaveResult::NoMemory) {
+            UserConfig::saveMemoryFailure("prepare", length);
+            return NoMemory;
+        }
+        if (prepared != UserConfig::SaveResult::Complete)
             return {State::Invalid, "Settings exceed saved record capacity"};
         if (!publication.tryAssign(candidate)) return NoMemory;
-        if (!candidate.saveRequired(flash, json)) return {State::Invalid, "Save failed; settings unchanged"};
+        const auto saved = candidate.savePrepared(flash, length);
+        if (saved == UserConfig::SaveResult::NoMemory) return NoMemory;
+        if (saved != UserConfig::SaveResult::Complete)
+            return {State::Invalid, "Save failed; settings unchanged"};
     }
     if (candidate._namePending) {
         // Do not replace effective values until both required records agree.
