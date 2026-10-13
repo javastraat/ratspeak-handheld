@@ -7,7 +7,6 @@
 #include <vector>
 #include <string>
 #include <map>
-#include <unordered_map>
 
 class SDStore;
 class FlashStore;
@@ -66,7 +65,6 @@ public:
     void evictStale(unsigned long maxAgeMs = 3600000);
     void clearTransientNodes();
     void clearAll();
-    void rebuildIndex();
 
 private:
     bool saveContact(const DiscoveredNode& node);
@@ -75,7 +73,9 @@ private:
     void flushContactMirrors();
     void closeContactMirrorDirectory();
     bool mirrorContact(const char* filename);
-    void cacheName(const std::string& hash, const std::string& name);
+    bool cacheName(const std::string& hash, const std::string& name);
+    int findNodeIndex(const uint8_t* hash, size_t length) const;
+    int findNodeIndexHex(const std::string& hash) const;
 
     std::vector<DiscoveredNode> _nodes;
     SDStore* _sd = nullptr;
@@ -91,6 +91,7 @@ private:
     bool _contactMirrorWaiting = false;
     unsigned long _lastContactMirrorAttempt = 0;
     MirrorWriteState _nameCacheWrites;
+    bool _nameCachePersistenceBlocked = false;
     unsigned long _lastContactSave = 0;
     unsigned long _lastNameCacheSave = 0;
     std::map<std::string, std::string> _nameCache;  // hexHash → displayName
@@ -102,9 +103,4 @@ private:
     static constexpr unsigned long CONTACT_SAVE_INTERVAL_MS = 30000;
     static constexpr unsigned long ANNOUNCE_MIN_INTERVAL_MS = 200;  // Rate-limit announce processing
 
-    std::unordered_map<std::string, int> _hashIndex;  // raw hash bytes → _nodes index
-
-    static std::string makeKey(const rs::Bytes& hash) {
-        return std::string((const char*)hash.data(), hash.size());
-    }
 };
