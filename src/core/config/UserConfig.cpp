@@ -4,16 +4,13 @@
 #include "config/BoardConfig.h"
 #include "radio/RadioFrequency.h"
 #include "radio/RadioBandwidth.h"
-#include "storage/StorageJsonAllocator.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <new>
-#if USERCONFIG_NVS_BACKUP
-#include "storage/StorageLease.h"
-#include <Preferences.h>
+#if USERCONFIG_NVS_LEGACY_READ
 #include <nvs.h>
 #endif
 
@@ -69,19 +66,8 @@ bool reserveConfigVector(std::vector<T>& values, size_t count) {
     return handheld::config::Memory::admits(0);
 }
 
-#if USERCONFIG_NVS_BACKUP
-// Full-JSON NVS backup tier — internal flash, no SPI bus, wear-leveled
-bool saveToNVS(const String& json) {
-    handheld::storage::StorageLease lease;
-    if (!lease.held()) return false;
-    Preferences prefs;
-    if (!prefs.begin(NVS_NS_CFG, false)) return false;
-    bool ok = prefs.putString("json", json) > 0;
-    prefs.end();
-    if (ok) Serial.println("[CONFIG] Saved to NVS");
-    return ok;
-}
-
+#if USERCONFIG_NVS_LEGACY_READ
+// Read-only compatibility for settings written by older firmware.
 using ConfigBytes = std::unique_ptr<char, decltype(&std::free)>;
 ConfigBytes loadFromNVS(bool& available, bool& present, size_t& length) {
     ConfigBytes bytes(nullptr, &std::free);
@@ -145,8 +131,7 @@ bool UserConfig::tryAssign(const UserConfig& source) {
 void UserConfig::copyStateFrom(const UserConfig& source) noexcept {
     std::memcpy(_nameIdentity, source._nameIdentity, sizeof _nameIdentity);
     _nameBound = source._nameBound; _namePending = source._namePending;
-    _source = source._source; _mirrorPending = source._mirrorPending;
-    _nvsMirrorPending = source._nvsMirrorPending; _recoveryRequired = source._recoveryRequired;
+    _source = source._source; _recoveryRequired = source._recoveryRequired;
 }
 
 void UserConfig::swap(UserConfig& other) noexcept {
@@ -155,8 +140,7 @@ void UserConfig::swap(UserConfig& other) noexcept {
     std::swap(_settings, other._settings);
     std::swap(_nameIdentity, other._nameIdentity);
     std::swap(_nameBound, other._nameBound); std::swap(_namePending, other._namePending);
-    std::swap(_source, other._source); std::swap(_mirrorPending, other._mirrorPending);
-    std::swap(_nvsMirrorPending, other._nvsMirrorPending);
+    std::swap(_source, other._source);
     std::swap(_recoveryRequired, other._recoveryRequired);
 }
 
@@ -542,9 +526,6 @@ bool UserConfig::load(FlashStore& flash) {
         bool unavailable = false;
         if (parseJson(json, true, &unavailable)) {
             _source = source == FlashStore::RecordSource::Primary ? Source::Flash : Source::FlashBackup;
-#if USERCONFIG_NVS_BACKUP
-            _nvsMirrorPending = !_namePending;
-#endif
             return true;
         }
         _source = unavailable ? Source::Unavailable : Source::Invalid;
@@ -554,7 +535,7 @@ bool UserConfig::load(FlashStore& flash) {
         _source = source == FlashStore::RecordSource::Invalid ? Source::Invalid : Source::Unavailable;
         _recoveryRequired = true; return false;
     }
-#if USERCONFIG_NVS_BACKUP
+#if USERCONFIG_NVS_LEGACY_READ
     bool available = false, present = false;
     size_t length = 0;
     const auto bytes = loadFromNVS(available, present, length);
@@ -577,9 +558,6 @@ bool UserConfig::saveRequired(FlashStore& flash) {
 bool UserConfig::saveRequired(FlashStore& flash, const String& json) {
     if (json.isEmpty() || _recoveryRequired || !flash.writeString(PATH_USER_CONFIG, json)) return false;
     _source = Source::Flash;
-#if USERCONFIG_NVS_BACKUP
-    if (!_namePending) _nvsMirrorPending = !saveToNVS(json);
-#endif
     return true;
 }
 
@@ -588,11 +566,8 @@ bool UserConfig::save(FlashStore& flash) {
 }
 
 bool UserConfig::load(SDStore& sd, FlashStore& flash) {
-    if (load(flash)) {
-        // A stale/removable mirror must never override a committed flash value.
-        _mirrorPending = _settings.sdStorageEnabled;
-        return true;
-    }
+    // Legacy settings must never override a committed flash value.
+    if (load(flash)) return true;
     if (!flash.isReady() || _recoveryRequired) return false;
     String backup;
     if (sd.isReady()) {
@@ -625,9 +600,8 @@ bool UserConfig::load(SDStore& sd, FlashStore& flash) {
         _settings.sdStorageEnabled = true;
         _recoveryRequired = false;
         if (save(flash)) {
-            _mirrorPending = true;
             _source = Source::Sd;
-            Serial.println("[CONFIG] Restored settings from SD backup");
+            Serial.println("[CONFIG] Imported legacy SD settings");
             return true;
         }
         // The SD record was valid; canonical write/admission failure must not
@@ -642,37 +616,6 @@ bool UserConfig::load(SDStore& sd, FlashStore& flash) {
     return false;
 }
 
-bool UserConfig::save(SDStore& sd, FlashStore& flash) {
-    // Publish one authoritative commit before touching any secondary copy.
-    // A failed flash commit leaves both the live settings and SD unchanged.
-    if (!save(flash)) return false;
-    _mirrorPending = _settings.sdStorageEnabled;
-    flushPending(sd, flash);
-    return true;
-}
-
-bool UserConfig::flushPending(SDStore& sd, FlashStore& flash) {
-    (void)flash;
-    if (_namePending || _recoveryRequired) return false;
-    if (!_settings.sdStorageEnabled) _mirrorPending = false;
-    if (!_mirrorPending && !_nvsMirrorPending) return true;
-    const String json = serializeToJson();
-    if (json.isEmpty()) return false;
-#if USERCONFIG_NVS_BACKUP
-    if (_nvsMirrorPending) _nvsMirrorPending = !saveToNVS(json);
-#endif
-    // Optional absent media cannot prevent a safe shutdown: flash is durable.
-    if (_mirrorPending && sd.isReady()) {
-        bool refused = false;
-        bool matches = false;
-        {
-            const String previous = sd.readString(SD_PATH_USER_CONFIG, handheld::config::Memory::reserveString, &refused);
-            matches = previous == json;
-        }
-        if (refused) return false;
-        if (matches) _mirrorPending = false;
-        else if (sd.ensureDir(SD_PATH_ROOT) && sd.ensureDir(SD_PATH_CONFIG_DIR) &&
-                 sd.writeString(SD_PATH_USER_CONFIG, json)) _mirrorPending = false;
-    }
-    return !_nvsMirrorPending && (!_mirrorPending || !sd.isReady());
+bool UserConfig::save(SDStore&, FlashStore& flash) {
+    return save(flash);
 }

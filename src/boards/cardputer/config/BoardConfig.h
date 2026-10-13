@@ -52,7 +52,7 @@
 #define BOARD_DEFAULT_WIFI_MODE      RAT_WIFI_OFF
 #define BOARD_DEFAULT_AUTOIFACE_MAX_PEERS 4
 #define STORAGE_ASYNC_WRITES         1      // WriteQueue task defers 0.5-4s LittleFS writes
-#define USERCONFIG_NVS_BACKUP        1      // Tier-3 full-JSON config copy in NVS
+#define USERCONFIG_NVS_LEGACY_READ   1      // Read settings left in NVS by older firmware
 #define LEGACY_READ_CTR_MIGRATION    1      // One-time .read_ctr -> read:true rewrite
 #define LEGACY_MSG_FILENAME_MIGRATION 1     // Pre-2.0 filenames; scan every available medium at boot
 #define LEGACY_GPS_LOC_MIGRATION     1      // Donor v2.0.3 wrote gps_loc

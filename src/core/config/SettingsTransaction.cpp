@@ -123,13 +123,11 @@ SettingsTransaction::Result SettingsTransaction::apply(UserConfig& effective, Us
     }
     publication.copyStateFrom(candidate);
     effective.swap(publication);
-    effective._mirrorPending = effective.settings().sdStorageEnabled;
-    effective.flushPending(sd, flash);
     return Complete;
 }
 
 SettingsTransaction::Result SettingsTransaction::settle(UserConfig& effective, UserConfig& candidate, UserConfig& publication,
-        IdentityManager& identities, SDStore& sd, FlashStore& flash) {
+        IdentityManager& identities, SDStore&, FlashStore& flash) {
     const int index = identities.activeIndex();
     if (!identities.validateSlot(index) || !matches(candidate, identities.identities()[index].hash)) return Recovery;
     const auto& slot = identities.identities()[index];
@@ -139,8 +137,6 @@ SettingsTransaction::Result SettingsTransaction::settle(UserConfig& effective, U
     if (!candidate.saveRequired(flash)) { candidate._namePending = true; return Pending; }
     publication.copyStateFrom(candidate);
     effective.swap(publication);
-    effective._mirrorPending = effective.settings().sdStorageEnabled;
-    effective.flushPending(sd, flash);
     return Complete;
 }
 
@@ -178,7 +174,5 @@ SettingsTransaction::Result SettingsTransaction::recover(UserConfig& effective, 
     if (!candidate.saveRequired(flash)) return {State::Invalid, "Name mirror save failed"};
     publication.copyStateFrom(candidate);
     effective.swap(publication);
-    effective._mirrorPending = effective.settings().sdStorageEnabled;
-    effective.flushPending(sd, flash);
     return Complete;
 }

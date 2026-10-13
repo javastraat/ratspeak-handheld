@@ -945,7 +945,6 @@ void loop() {
         backend->pollRadioBeforeBlockingWork()) {
         lastMetadataRetry = now;
         if (!identityMgr.flushPending()) Serial.println("[STORAGE] Identity metadata retry pending");
-        if (!userConfig.flushPending(sdStore, flash)) Serial.println("[STORAGE] Settings backup retry pending");
     }
 
     // 1. Input (keyboard refresh is INT-gated, with fallback polling)

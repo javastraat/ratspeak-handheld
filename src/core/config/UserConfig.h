@@ -162,11 +162,9 @@ public:
     bool load(FlashStore& flash);
     bool save(FlashStore& flash);
 
-    // Internal flash is authoritative; removable SD is a repairable mirror.
+    // Save only to internal flash. SD is read-only legacy recovery input.
     bool load(SDStore& sd, FlashStore& flash);
     bool save(SDStore& sd, FlashStore& flash);
-    bool flushPending(SDStore& sd, FlashStore& flash);
-    bool mirrorPending() const { return _mirrorPending || _nvsMirrorPending; }
     bool recoveryRequired() const { return _recoveryRequired; }
     bool settingsPending() const { return _namePending; }
     enum class Source : uint8_t { Absent, Flash, FlashBackup, Nvs, Sd, Unavailable, Invalid };
@@ -199,7 +197,5 @@ private:
     static void sanitizeSettings(UserSettings& settings);
 
     UserSettings _settings;
-    bool _mirrorPending = false;
-    bool _nvsMirrorPending = false;
     bool _recoveryRequired = false;
 };

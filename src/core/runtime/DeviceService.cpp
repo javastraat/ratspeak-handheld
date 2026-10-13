@@ -179,7 +179,6 @@ void DeviceService::poll() {
         _backend.pollRadioBeforeBlockingWork()) {
         _lastIdentityRetry = millis();
         if (!_identities.flushPending()) notice("Identity metadata save failed; retry pending");
-        if (!_config.flushPending(_sd, _flash)) notice("Settings saved on device; backup retry pending");
     }
     if (_backend.pollRadioBeforeBlockingWork() || _messages.deferredIO()) pollHistory();
     if (_scanSlot != ServiceMailbox::NoSlot && finishScan) {
@@ -238,7 +237,7 @@ void DeviceService::finishSettings(uint8_t slot) {
     strlcpy(result.detail, !_maintenance.accepting() ? "Settings saved; shutdown in progress" :
         radio == RadioApply::RebootRequired ? "Settings saved; radio enable needs reboot" :
         radio == RadioApply::Unavailable ? "Settings saved; radio unavailable" :
-        _config.mirrorPending() ? "Settings saved on device; backup pending" : "Settings saved", sizeof result.detail);
+        "Settings saved", sizeof result.detail);
     _settingsSlot = ServiceMailbox::NoSlot;
     _mailbox.complete(slot, result);
 }

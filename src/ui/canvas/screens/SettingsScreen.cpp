@@ -1135,7 +1135,7 @@ void SettingsScreen::finishRadioApply(RadioApply result) {
     _presetAnnouncePending = false; // Retire before any backend callback.
     if (result == RadioApply::RebootRequired) { showToast("Saved; radio needs reboot", 2500); return; }
     if (result == RadioApply::Unavailable) { showToast("Saved; radio unavailable", 2500); return; }
-    if (!announce) { showToast(_config->mirrorPending() ? "Saved; backup pending" : "Saved!"); return; }
+    if (!announce) { showToast("Settings saved"); return; }
     if (!_backend || !_backend->protocolReady()) { showToast("Preset applied (no announce)"); return; }
     const auto appData = encodeAnnounceName(_config->settings().displayName, _backend->destinationHashHex().c_str());
     const auto sent = _backend->announce(appData.data(), appData.size());
