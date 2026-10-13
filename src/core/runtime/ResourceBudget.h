@@ -8,8 +8,11 @@ namespace handheld {
 // availability estimate: SDK allocations and fragmentation require live floors.
 // Each owner must enforce its row before integrated release qualification.
 struct ResourceBudget {
-    static constexpr size_t MicroNode = 32768;
-    static constexpr size_t ProtocolContext = 9216;
+    // Mirrors the Rust compile-time guards in protocol/src/lib.rs; openTransport
+    // also checks the linked artifact's MICRO node against MicroNode.
+    static constexpr size_t MicroNode = 32 * 1024;
+    static constexpr size_t ProtocolContext = 10 * 1024;
+    static constexpr size_t ProtocolBase = 42 * 1024; // Context plus MICRO node
     static constexpr size_t ResourceBuffer = 4096;
     static constexpr size_t ResourceDirections = 2;
     static constexpr size_t DirectCodecScratch = 4096;
@@ -73,6 +76,8 @@ struct ResourceBudget {
     }
 };
 static_assert(ResourceBudget::OutgoingDescriptors == 6400, "Review outgoing retention changes");
+static_assert(ResourceBudget::ProtocolContext + ResourceBudget::MicroNode == ResourceBudget::ProtocolBase,
+              "Mirror the Rust context and node guards together");
 static_assert(ResourceBudget::InputRetention == 128, "Review input retention changes");
 static_assert(ResourceBudget::CardInternalFree == storage::Budget::CardHeapFloor,
               "Storage and global internal-heap floor must agree");

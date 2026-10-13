@@ -263,6 +263,10 @@ bool ProtocolRuntime::openTransport(int32_t profile, uint32_t nodeHeapCaps) {
         Serial.printf("[RUST] artifact/profile mismatch (profile=%ld)\n", (long)profile);
         return false;
     }
+    if (profile == RS_HANDHELD_PROFILE_MICRO && size > handheld::ResourceBudget::MicroNode) {
+        Serial.printf("[RUST] MICRO node exceeds budget (%u bytes)\n", (unsigned)size);
+        return false;
+    }
 
     // LiteNode requires `align`-byte alignment; heap_caps_malloc only guarantees
     // 4 bytes (PSRAM returned a 4-aligned ptr → open_transport rejected it), so
