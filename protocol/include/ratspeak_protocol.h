@@ -407,6 +407,11 @@ rs_handheld_status_t rs_handheld_rns_packet_ingest(rs_handheld_rns_t *ctx, const
 rs_handheld_status_t rs_handheld_rns_update_interface(rs_handheld_rns_t *ctx,
     uint8_t interface_id, uint32_t generation, int32_t interface_mode,
     uint32_t bitrate_bps, uint8_t outbound);
+/* Exact-owner clear-packet budget (0..500), after framing/IFAC. A stale/zero
+ * generation returns ERR_NOT_READY and leaves current facts unchanged. Changes
+ * retire transit Links; a budget below500 cannot carry any Link handshake. */
+rs_handheld_status_t rs_handheld_rns_update_interface_capacity(rs_handheld_rns_t *ctx,
+    uint8_t interface_id, uint32_t generation, uint16_t clear_mtu);
 
 rs_handheld_status_t rs_handheld_rns_packet_ingest_with_mode(rs_handheld_rns_t *ctx,
                                          const uint8_t *raw, size_t raw_len,
@@ -948,7 +953,7 @@ rs_handheld_status_t rs_handheld_rns_seed_seen_message(rs_handheld_rns_t *ctx, c
 
 /* INITIATOR: build a LINKREQUEST. x25519_priv[32] + ed25519_seed[32] are per-link EPHEMERAL key
  * material (caller entropy; no RNG here) — retain x25519_priv for rs_handheld_rns_link_derive. mode MUST be
- * 1 (AES-256); any other value -> RS_HANDHELD_ERR_UNSUPPORTED. mtu is masked to 21 bits (use 500). Writes
+ * 1 (AES-256); any other value -> RS_HANDHELD_ERR_UNSUPPORTED. mtu must be0 or500 (zero normalizes to500); other values return ERR_INVALID_ARG. Writes
  * the payload to out[out_cap] and *out_len (67). RS_HANDHELD_ERR_CAPACITY if out is too small. */
 /* ACTIVE initiator only: build LINKIDENTIFY plaintext, then encrypt on that Link. */
 rs_handheld_status_t rs_handheld_rns_link_identify(const rs_handheld_rns_t *ctx,
@@ -966,7 +971,9 @@ rs_handheld_status_t rs_handheld_rns_link_request_build(const uint8_t x25519_pri
 /* RESPONDER: parse a LINKREQUEST. out_x25519_pub[32] (required) is the initiator's ephemeral X25519
  * public key for rs_handheld_rns_link_derive; out_ed25519_pub[32], out_mode, out_mtu are optional (NULL to
  * ignore). The legacy 64-byte (keys-only) form is also accepted, defaulting to AES-256/MTU-500.
- * RS_HANDHELD_ERR_INVALID_ARG on NULL required args or a length that is neither 64 nor 67. */
+ * Only AES-256 is accepted; other modes return ERR_UNSUPPORTED. Valid larger offers select500.
+ * RS_HANDHELD_ERR_INVALID_ARG on NULL required args, sub500 MTU or a length other than64/67.
+ * Every output is unchanged on error. */
 rs_handheld_status_t rs_handheld_rns_link_request_parse(const uint8_t *data, size_t data_len,
                                               uint8_t out_x25519_pub[32], uint8_t out_ed25519_pub[32],
                                               uint8_t *out_mode, uint32_t *out_mtu);
@@ -978,8 +985,8 @@ rs_handheld_status_t rs_handheld_rns_link_id(const uint8_t dest_hash[16], const 
 
 /* RESPONDER: build an LRPROOF, signed with the ACTIVE identity's long-term Ed25519 key.
  * responder_x25519_priv[32] is the responder's per-link EPHEMERAL X25519 key (retain it for
- * rs_handheld_rns_link_derive). mode MUST be 1 (AES-256) -> else RS_HANDHELD_ERR_UNSUPPORTED; mtu masked to 21
- * bits. Writes the payload to out[out_cap] and *out_len (99). RS_HANDHELD_ERR_NOT_READY if no identity is
+ * rs_handheld_rns_link_derive). mode MUST be 1 (AES-256) -> else RS_HANDHELD_ERR_UNSUPPORTED; mtu must be0 or500,
+ * zero normalizes to500; other values return ERR_INVALID_ARG. Writes the payload to out[out_cap] and *out_len (99). RS_HANDHELD_ERR_NOT_READY if no identity is
  * loaded; RS_HANDHELD_ERR_CAPACITY if out is too small. */
 rs_handheld_status_t rs_handheld_rns_link_proof_build(const rs_handheld_rns_t *ctx,
                                             const uint8_t responder_x25519_priv[32],
@@ -987,10 +994,11 @@ rs_handheld_status_t rs_handheld_rns_link_proof_build(const rs_handheld_rns_t *c
                                             uint8_t *out, size_t out_cap, size_t *out_len);
 
 /* INITIATOR: validate an LRPROOF against the destination identity's public key (from its announce) +
- * the link id. Writes 1/0 to *out_valid; on a structurally valid proof, the responder's ephemeral
+ * the link id. Writes 1/0 to *out_valid; on an authenticated valid proof, the responder's ephemeral
  * X25519 public key to out_responder_x25519_pub[32] (optional, NULL to ignore — needed for
  * rs_handheld_rns_link_derive). A malformed length, a non-AES-256 mode, or a bad signature -> *out_valid = 0
- * with RS_HANDHELD_OK (not an arg error). The legacy 96-byte proof is accepted. Stateless.
+ * with RS_HANDHELD_OK (not an arg error). Only effectiveMTU500 fits our request; a larger proof
+ * is invalid. The legacy96-byte proof is accepted. Key output is unchanged on invalid proof. Stateless.
  * RS_HANDHELD_ERR_INVALID_ARG only on NULL required args.
  * ACTIVATION CONTRACT (the C++ link state machine's job — NOT done here): a valid proof authenticates
  * the responder but does NOT activate the link. After this returns valid, the initiator must
@@ -1140,9 +1148,10 @@ rs_handheld_status_t rs_handheld_rns_resource_advertise_accept(rs_handheld_rns_t
                                                                uint8_t out_resource_hash[32]);
 
 /* RECEIVER: ingest one received part (raw RESOURCE-context packet payload). Writes 1/0 to
- * *out_new (1 = filled a previously-empty slot; duplicates, tampered parts and out-of-window
- * arrivals are 0 — not an error) and 1/0 to *out_complete (all parts present -> call
- * rs_handheld_rns_resource_assemble). RS_HANDHELD_ERR_NOT_READY if no inbound transfer is open. */
+ * *out_new (1 = filled a previously-empty slot; a matching received duplicate is 0)
+ * and 1/0 to *out_complete (all parts present -> call rs_handheld_rns_resource_assemble).
+ * Unknown, tampered or out-of-window parts return RS_HANDHELD_ERR_INVALID_ARG without
+ * changing outputs. RS_HANDHELD_ERR_NOT_READY if no inbound transfer is open. */
 rs_handheld_status_t rs_handheld_rns_resource_part_ingest(rs_handheld_rns_t *ctx,
                                                           const uint8_t *part, size_t part_len,
                                                           int32_t *out_new, int32_t *out_complete);

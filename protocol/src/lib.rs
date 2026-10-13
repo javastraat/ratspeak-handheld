@@ -161,6 +161,8 @@ const _: () = {
 pub struct RsHandheldRns {
     /// Active identity. `None` until `rs_handheld_rns_load_identity` succeeds.
     identity: Option<LocalIdentity>,
+    /// Reusable 1 KiB normalized field-key index; never placed on the protocol task stack.
+    lxmf_field_scratch: core::cell::RefCell<lxmf_codec::LxmfFieldScratch>,
     /// Transport/relay node. `None` until `rs_handheld_rns_open_transport` succeeds.
     /// Points into the CALLER-owned buffer passed to open_transport (never Rust-allocated,
     /// never freed here): the node is plain no-Drop data, so shutdown drops this pointer
@@ -206,10 +208,10 @@ pub struct RsHandheldRns {
 // resource buffers. These target-compiled guards catch pointer-width/layout drift as well as
 // ratchet/table growth.
 const _: () = {
-    assert!(core::mem::size_of::<RsHandheldRns>() <= 9 * 1024);
+    assert!(core::mem::size_of::<RsHandheldRns>() <= 10 * 1024);
     assert!(
         core::mem::size_of::<RsHandheldRns>() + core::mem::size_of::<rns_lite_core::MicroNode>()
-            <= 41 * 1024
+            <= 42 * 1024
     );
 };
 
@@ -330,6 +332,7 @@ pub unsafe extern "C" fn rs_handheld_rns_init(out: *mut *mut RsHandheldRns) -> R
         }
         let ctx = Box::new(RsHandheldRns {
             identity: None,
+            lxmf_field_scratch: core::cell::RefCell::new(lxmf_codec::LxmfFieldScratch::new()),
             node: None,
             seen: SeenMessages100::new(),
             resource_out: None,

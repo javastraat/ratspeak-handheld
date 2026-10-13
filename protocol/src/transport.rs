@@ -611,6 +611,39 @@ pub unsafe extern "C" fn rs_handheld_rns_update_interface(
     })
 }
 
+/// Publish an interface's actual clear-packet capacity after framing and IFAC.
+/// The generation must match the facts published by `rs_handheld_rns_update_interface`.
+/// Stale or unavailable owners return `ErrNotReady`; no replacement owner is changed.
+/// Capacity changes retire existing transit Links. This firmware's drivers currently
+/// support 500 bytes; lower budgets remain valid for packets but cannot carry a Link.
+///
+/// # Safety
+/// `ctx` is live and exclusively owned with an open transport node.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rs_handheld_rns_update_interface_capacity(
+    ctx: *mut RsHandheldRns,
+    interface_id: u8,
+    generation: u32,
+    clear_mtu: u16,
+) -> RsHandheldStatus {
+    guard(|| {
+        if ctx.is_null() || interface_id >= 7 || clear_mtu > 500 {
+            return RsHandheldStatus::ErrInvalidArg;
+        }
+        // SAFETY: exclusive live context and caller-owned open node per contract.
+        let ctx = unsafe { &mut *ctx };
+        let Some(mut pointer) = ctx.node else {
+            return RsHandheldStatus::ErrNotReady;
+        };
+        let node = unsafe { pointer.as_mut() };
+        if node.update_interface_packet_capacity(interface_id, generation, usize::from(clear_mtu)) {
+            RsHandheldStatus::Ok
+        } else {
+            RsHandheldStatus::ErrNotReady
+        }
+    })
+}
+
 /// Compatibility ingest entry point for hosts without interface-mode metadata. Learned paths use
 /// the active profile's node-wide mode, matching the pre-interface-scoped API.
 ///

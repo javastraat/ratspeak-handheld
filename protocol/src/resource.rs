@@ -498,6 +498,8 @@ unsafe fn accept_resource(
 /// `*out_complete` (all parts present -> call `rs_handheld_rns_resource_assemble`).
 /// `ErrNotReady` if no inbound transfer is open.
 ///
+/// Unknown, malformed or out-of-window parts return `ErrInvalidArg` without
+/// changing outputs. A matching received duplicate returns `Ok` with new=0.
 /// # Safety
 /// `ctx` live; `part` `part_len` readable bytes; `out_new`/`out_complete` writable i32s.
 #[unsafe(no_mangle)]
@@ -519,6 +521,9 @@ pub unsafe extern "C" fn rs_handheld_rns_resource_part_ingest(
         };
         // SAFETY: non-null + correctly sized per the contract.
         let part = unsafe { core::slice::from_raw_parts(part, part_len) };
+        if !res.matches_part(part) {
+            return RsHandheldStatus::ErrInvalidArg;
+        }
         let is_new = res.receive_part(part);
         unsafe {
             *out_new = is_new as i32;

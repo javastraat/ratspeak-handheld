@@ -42,8 +42,9 @@ public:
     bool receiving() const { return _in.active; }
     uint8_t activeTransfers() const { return (uint8_t)((_out.active ? 1 : 0) + (_in.active ? 1 : 0)); }
 
-    // Link-frame dispatch from the link manager (RESOURCE_ADV/REQ/PRF/parts).
-    void onLinkFrame(const uint8_t peerDest[16], const uint8_t linkId[16], const uint8_t key[64],
+    // True only for a valid frame belonging to an admitted transfer; this
+    // acceptance grants Link liveness, independently from message delivery.
+    bool onLinkFrame(const uint8_t peerDest[16], const uint8_t linkId[16], const uint8_t key[64],
                      uint8_t ifaceId, const rs_handheld_local_frame_t& f);
     void dropPeer(const uint8_t peerDest[16]);
     void cancelSend(handheld::outgoing::Ticket);

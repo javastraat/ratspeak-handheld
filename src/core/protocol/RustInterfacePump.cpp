@@ -330,6 +330,12 @@ bool RustInterfacePump::syncInterfaceFacts() {
         if (rs_handheld_rns_update_interface(_ctx, id, generation, interfaceMode(id),
                 interfaceBitrate(id), generation && (live & (1u << id)) ? 1 : 0) != RS_HANDHELD_OK)
             return false;
+        // LoRa split assembly, TCP, Auto and AP receive/egress paths all enforce
+        // the same 500-byte clear-packet budget. No handheld IFAC is configured.
+        // Publish only against this exact live owner generation.
+        if (generation && rs_handheld_rns_update_interface_capacity(_ctx, id, generation, 500)
+                != RS_HANDHELD_OK)
+            return false;
     }
     return true;
 }

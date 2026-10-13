@@ -673,8 +673,8 @@ fn ffi_context_and_micro_node_stay_inside_cardputer_heap_budget() {
     let small_node = core::mem::size_of::<rns_lite_core::SmallNode>();
     let micro_node = core::mem::size_of::<rns_lite_core::MicroNode>();
     println!("ffi context={context} B, small node={small_node} B, micro node={micro_node} B");
-    assert!(context <= 9 * 1024);
-    assert!(context + micro_node <= 41 * 1024);
+    assert!(context <= 10 * 1024);
+    assert!(context + micro_node <= 42 * 1024);
 }
 
 #[test]
@@ -2308,6 +2308,290 @@ fn link_handshake_and_session_through_ffi() {
     unsafe { rs_handheld_rns_shutdown(responder) };
 }
 
+#[test]
+fn checked_link_endpoint_admission_through_ffi() {
+    let responder = loaded_ctx();
+    let mut request = [0u8; 67];
+    let mut length = 0;
+    assert_eq!(
+        unsafe {
+            rs_handheld_rns_link_request_build(
+                &[3; 32],
+                &[4; 32],
+                1,
+                500,
+                request.as_mut_ptr(),
+                request.len(),
+                &mut length,
+            )
+        },
+        RsHandheldStatus::Ok
+    );
+
+    // Public builders never mask a bad mode or silently resize a fixed endpoint.
+    for (mode, mtu, expected) in [
+        (9, 500, RsHandheldStatus::ErrUnsupported),
+        (0, 500, RsHandheldStatus::ErrUnsupported),
+        (1, 1, RsHandheldStatus::ErrInvalidArg),
+        (1, 499, RsHandheldStatus::ErrInvalidArg),
+        (1, 501, RsHandheldStatus::ErrInvalidArg),
+        (1, 0x20_0000, RsHandheldStatus::ErrInvalidArg),
+        (1, u32::MAX, RsHandheldStatus::ErrInvalidArg),
+    ] {
+        let mut output = [0xa5; 99];
+        let mut out_len = 123;
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_request_build(
+                    &[3; 32],
+                    &[4; 32],
+                    mode,
+                    mtu,
+                    output.as_mut_ptr(),
+                    output.len(),
+                    &mut out_len,
+                )
+            },
+            expected
+        );
+        assert_eq!(output, [0xa5; 99]);
+        assert_eq!(out_len, 123);
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_proof_build(
+                    responder,
+                    &[5; 32],
+                    &[6; 16],
+                    mode,
+                    mtu,
+                    output.as_mut_ptr(),
+                    output.len(),
+                    &mut out_len,
+                )
+            },
+            expected
+        );
+        assert_eq!(output, [0xa5; 99]);
+        assert_eq!(out_len, 123);
+    }
+    let mut zero_request = [0; 67];
+    assert_eq!(
+        unsafe {
+            rs_handheld_rns_link_request_build(
+                &[3; 32],
+                &[4; 32],
+                1,
+                0,
+                zero_request.as_mut_ptr(),
+                zero_request.len(),
+                &mut length,
+            )
+        },
+        RsHandheldStatus::Ok
+    );
+    assert_eq!(zero_request, request);
+
+    // The raw parser is transit-capable, but the FFI boundary is AES256-only and
+    // selects exactly500 from a valid larger offer. It never mutates peer bytes.
+    for mtu in [0, 500, 501, 0x1f_ffff] {
+        request[64..].copy_from_slice(&SignallingData::new(1, mtu).pack());
+        let before = request;
+        let mut public = [0; 32];
+        let mut mode = 99;
+        let mut selected = 99;
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_request_parse(
+                    request.as_ptr(),
+                    request.len(),
+                    &mut public,
+                    core::ptr::null_mut(),
+                    &mut mode,
+                    &mut selected,
+                )
+            },
+            RsHandheldStatus::Ok
+        );
+        assert_eq!(mode, 1);
+        assert_eq!(selected, 500);
+        assert_eq!(request, before);
+    }
+    for (mode, mtu, expected) in [
+        (0, 500, RsHandheldStatus::ErrUnsupported),
+        (7, 500, RsHandheldStatus::ErrUnsupported),
+        (1, 499, RsHandheldStatus::ErrInvalidArg),
+        (1, 1, RsHandheldStatus::ErrInvalidArg),
+    ] {
+        request[64..].copy_from_slice(&SignallingData::new(mode, mtu).pack());
+        let mut public = [0xa5; 32];
+        let mut out_mode = 99;
+        let mut selected = 99;
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_request_parse(
+                    request.as_ptr(),
+                    request.len(),
+                    &mut public,
+                    core::ptr::null_mut(),
+                    &mut out_mode,
+                    &mut selected,
+                )
+            },
+            expected
+        );
+        assert_eq!(public, [0xa5; 32]);
+        assert_eq!((out_mode, selected), (99, 99));
+    }
+    // No permissive partial/trailing extension parsing at the C boundary.
+    for len in [63, 65, 66, 68] {
+        let raw = [0; 68];
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_request_parse(
+                    raw.as_ptr(),
+                    len,
+                    &mut [0; 32],
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                )
+            },
+            RsHandheldStatus::ErrInvalidArg
+        );
+    }
+    let mut selected = 99;
+    assert_eq!(
+        unsafe {
+            rs_handheld_rns_link_request_parse(
+                request.as_ptr(),
+                64,
+                &mut [0; 32],
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut selected,
+            )
+        },
+        RsHandheldStatus::Ok
+    );
+    assert_eq!(selected, 500);
+
+    // Sign exact raw modern/legacy fixtures ourselves: the endpoint builder may
+    // not manufacture unsupported offers just to make a validation test pass.
+    let identity = unsafe { &*responder }.identity.as_ref().unwrap();
+    let public = *identity.public_key();
+    let link_id = [6; 16];
+    let ephemeral = [7; 32];
+    let mut signed = [0; 83];
+    signed[..16].copy_from_slice(&link_id);
+    signed[16..48].copy_from_slice(&ephemeral);
+    signed[48..80].copy_from_slice(&public[32..]);
+    for (mode, mtu, legacy, expected) in [
+        (1, 500, false, 1),
+        (1, 0, false, 1),
+        (1, 500, true, 1),
+        (1, 501, false, 0),
+        (1, 499, false, 0),
+        (0, 500, false, 0),
+    ] {
+        let trailer = SignallingData::new(mode, mtu).pack();
+        signed[80..].copy_from_slice(&trailer);
+        let signature = identity.sign(&signed[..if legacy { 80 } else { 83 }]);
+        let mut proof = [0; 100];
+        proof[..64].copy_from_slice(&signature);
+        proof[64..96].copy_from_slice(&ephemeral);
+        proof[96..99].copy_from_slice(&trailer);
+        let mut peer = [0xa5; 32];
+        let mut valid = -1;
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_proof_validate(
+                    &public,
+                    &link_id,
+                    proof.as_ptr(),
+                    if legacy { 96 } else { 99 },
+                    &mut peer,
+                    &mut valid,
+                )
+            },
+            RsHandheldStatus::Ok
+        );
+        assert_eq!(valid, expected, "mode={mode} mtu={mtu} legacy={legacy}");
+        assert_eq!(peer, if expected == 1 { ephemeral } else { [0xa5; 32] });
+        proof[0] ^= 1;
+        peer = [0xa5; 32];
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_proof_validate(
+                    &public,
+                    &link_id,
+                    proof.as_ptr(),
+                    if legacy { 96 } else { 99 },
+                    &mut peer,
+                    &mut valid,
+                )
+            },
+            RsHandheldStatus::Ok
+        );
+        assert_eq!(valid, 0);
+        assert_eq!(peer, [0xa5; 32]);
+        assert_eq!(
+            unsafe {
+                rs_handheld_rns_link_proof_validate(
+                    &public,
+                    &link_id,
+                    proof.as_ptr(),
+                    100,
+                    &mut peer,
+                    &mut valid,
+                )
+            },
+            RsHandheldStatus::Ok
+        );
+        assert_eq!(valid, 0);
+    }
+    unsafe { rs_handheld_rns_shutdown(responder) };
+}
+
+#[test]
+fn interface_capacity_updates_require_current_owner_through_ffi() {
+    let ctx = loaded_ctx();
+    let _node = open_transport_into(ctx, 1);
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface(ctx, 0, 1, RS_HANDHELD_IFACE_MODE_FULL, 0, 1) },
+        RsHandheldStatus::Ok
+    );
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface_capacity(ctx, 0, 1, 499) },
+        RsHandheldStatus::Ok
+    );
+    let node = || unsafe { (*ctx).node.unwrap().as_ref() };
+    assert_eq!(node().interface_clear_mtu(0), 499);
+    assert!(node().require_link_capacity(0).is_err());
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface(ctx, 0, 2, RS_HANDHELD_IFACE_MODE_FULL, 0, 1) },
+        RsHandheldStatus::Ok
+    );
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface_capacity(ctx, 0, 2, 500) },
+        RsHandheldStatus::Ok
+    );
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface_capacity(ctx, 0, 1, 400) },
+        RsHandheldStatus::ErrNotReady
+    );
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface_capacity(ctx, 0, 0, 400) },
+        RsHandheldStatus::ErrNotReady
+    );
+    assert_eq!(
+        unsafe { rs_handheld_rns_update_interface_capacity(ctx, 0, 2, 501) },
+        RsHandheldStatus::ErrInvalidArg
+    );
+    assert_eq!(node().interface_clear_mtu(0), 500);
+    assert!(node().require_link_capacity(0).is_ok());
+    unsafe { rs_handheld_rns_shutdown(ctx) };
+}
+
 // ---- Resource — pinned vs ../rsReticulumLite/vectors/resource_vectors.json
 // (RNS 1.3.8; same fixed handshake material as the lite compat tests). ----
 
@@ -2451,6 +2735,22 @@ fn resource_full_transfer_through_ffi() {
                 },
                 RsHandheldStatus::Ok
             );
+            let mut unknown = part;
+            unknown[0] ^= 0xff;
+            let (mut untouched_new, mut untouched_complete) = (-1, -1);
+            assert_eq!(
+                unsafe {
+                    rs_handheld_rns_resource_part_ingest(
+                        rx,
+                        unknown.as_ptr(),
+                        part_len,
+                        &mut untouched_new,
+                        &mut untouched_complete,
+                    )
+                },
+                RsHandheldStatus::ErrInvalidArg
+            );
+            assert_eq!((untouched_new, untouched_complete), (-1, -1));
             let mut is_new = -1i32;
             assert_eq!(
                 unsafe {
@@ -2753,9 +3053,9 @@ fn resource_negative_paths_through_ffi() {
                 &mut complete,
             )
         },
-        RsHandheldStatus::Ok
+        RsHandheldStatus::ErrInvalidArg
     );
-    assert_eq!((is_new, complete), (0, 0));
+    assert_eq!((is_new, complete), (-1, -1));
 
     // Out-of-range part index -> ErrInvalidArg; undersized part buffer -> ErrCapacity.
     assert_eq!(
@@ -4239,4 +4539,30 @@ fn voice_endpoint_admission_is_explicit_identity_bound_and_separate_from_deliver
     assert!(!unsafe { (*ctx).voice_enabled });
     assert!(!unsafe { (*ctx).node.unwrap().as_ref() }.is_own_destination(&dest));
     unsafe { rs_handheld_rns_shutdown(ctx) };
+}
+
+#[test]
+fn persistent_lxmf_field_scratch_is_bounded_and_reentrant_parse_is_refused() {
+    assert_eq!(core::mem::size_of::<lxmf_codec::LxmfFieldScratch>(), 1024);
+    println!(
+        "protocol context={} micro aggregate={}",
+        core::mem::size_of::<RsHandheldRns>(),
+        core::mem::size_of::<RsHandheldRns>() + core::mem::size_of::<rns_lite_core::MicroNode>()
+    );
+    let mut context = core::ptr::null_mut();
+    unsafe {
+        assert_eq!(rs_handheld_rns_init(&mut context), RsHandheldStatus::Ok);
+        assert_eq!(
+            rs_handheld_rns_load_identity(context, &[1; 64]),
+            RsHandheldStatus::Ok
+        );
+        let held = (*context).lxmf_field_scratch.borrow_mut();
+        let mut message = core::mem::zeroed();
+        assert_eq!(
+            rs_handheld_rns_lxmf_parse(context, [0u8; 1].as_ptr(), 1, &[0; 64], &mut message),
+            RsHandheldStatus::ErrNotReady
+        );
+        drop(held);
+        rs_handheld_rns_shutdown(context);
+    }
 }

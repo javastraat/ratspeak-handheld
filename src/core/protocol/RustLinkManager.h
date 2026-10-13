@@ -169,22 +169,23 @@ private:
         uint8_t hops = 1;
         bool hasNextHop = false;
         uint8_t nextHop[16] = {};
-        unsigned long requestMs = 0;
+        uint32_t requestMs = 0;
         uint32_t establishmentTimeoutMs = 12000;
         // Watchdog baseline: refreshed on inbound, proof-echo and activation ONLY
         // (Link.py:788-790 — TX must never mask peer death).
-        unsigned long lastInboundMs = 0;
-        unsigned long lastKeepaliveSentMs = 0;
+        uint32_t lastInboundMs = 0;
+        uint32_t lastKeepaliveSentMs = 0;
         // One coalesced FF/FE control owned by this watchdog until driver
         // admission. Refusal preserves its birth and interface incarnation.
         uint64_t keepaliveBornMs = 0;
         uint32_t keepaliveInterfaceGeneration = 0;
         bool keepalivePending = false;
         bool keepaliveAttempted = false;
-        unsigned long staleSinceMs = 0;
+        uint32_t staleSinceMs = 0;
         uint32_t keepaliveMs = 360000;  // KEEPALIVE default until RTT is measured
         uint32_t staleTimeMs = 720000;  // STALE_FACTOR(2) * keepalive
         double rttSecs = 0;
+        uint32_t staleGraceMs = 5000;
     };
 
     Link* findByDest(const uint8_t dest[16], Owner owner = Owner::Delivery);

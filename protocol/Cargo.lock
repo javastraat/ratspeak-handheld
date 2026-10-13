@@ -203,14 +203,14 @@ dependencies = [
 
 [[package]]
 name = "lxst-codec2"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "lxst-embedded"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lxst-codec2",
  "thiserror",

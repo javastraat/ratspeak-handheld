@@ -333,6 +333,10 @@ pub unsafe extern "C" fn rs_handheld_rns_lxmf_parse_hint_media(
         } else {
             Some(key_hint as usize)
         };
+        let mut fields = match c.lxmf_field_scratch.try_borrow_mut() {
+            Ok(fields) => fields,
+            Err(_) => return RsHandheldStatus::ErrNotReady,
+        };
         let view = match lxmf_codec::parse_opportunistic_ratchet_hint(
             identity,
             c.ratchet_ring.private_keys(),
@@ -340,6 +344,7 @@ pub unsafe extern "C" fn rs_handheld_rns_lxmf_parse_hint_media(
             data,
             unsafe { &*source_public_key },
             scratch,
+            &mut fields,
         ) {
             Ok(view) => view,
             Err(e) => return map_parse_error(e),
@@ -365,8 +370,10 @@ fn map_parse_error(error: LxmfError) -> RsHandheldStatus {
         | LxmfError::SignatureInvalid
         | LxmfError::SourceHashMismatch
         | LxmfError::DestinationMismatch => RsHandheldStatus::ErrCrypto,
-        LxmfError::MalformedPayload | LxmfError::OutputTooSmall => RsHandheldStatus::ErrInvalidArg,
-        LxmfError::TooLong => RsHandheldStatus::ErrCapacity,
+        LxmfError::MalformedPayload | LxmfError::DuplicateField | LxmfError::OutputTooSmall => {
+            RsHandheldStatus::ErrInvalidArg
+        }
+        LxmfError::TooLong | LxmfError::TooManyFields => RsHandheldStatus::ErrCapacity,
     }
 }
 

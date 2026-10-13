@@ -17,12 +17,19 @@ static_assert(RustLinkManager::MAX_LINKS <= RustIncomingDelivery::NoLink,
 
 namespace {
 // Python RNS 1.2.5 Link.py constants.
-constexpr unsigned long KEEPALIVE_MS = 360000;             // KEEPALIVE_MAX
-constexpr unsigned long KEEPALIVE_MIN_MS = 5000;           // KEEPALIVE_MIN
-constexpr unsigned long ESTABLISHMENT_TIMEOUT_PER_HOP_MS = 6000;  // DEFAULT_PER_HOP_TIMEOUT
-constexpr unsigned long STALE_GRACE_MS = 5000;             // STALE_GRACE
+constexpr uint32_t KEEPALIVE_MS = 360000;             // KEEPALIVE_MAX
+constexpr uint32_t KEEPALIVE_MIN_MS = 5000;           // KEEPALIVE_MIN
+constexpr uint32_t ESTABLISHMENT_TIMEOUT_PER_HOP_MS = 6000;  // DEFAULT_PER_HOP_TIMEOUT
+constexpr uint32_t STALE_GRACE_MS = 5000;             // STALE_GRACE
 constexpr double KEEPALIVE_PER_RTT = 360.0 / 1.75;         // KEEPALIVE_MAX / KEEPALIVE_MAX_RTT
-constexpr double KEEPALIVE_TIMEOUT_FACTOR = 4.0;
+constexpr double RTT_MAX_SECS = 720.0;
+
+// Adapted from the trusted full Rust Link peer-RTT comparison. Clamp the
+// complete local result too before any integer timer conversion.
+double boundedRtt(double value) {
+    if (isnan(value) || value < 0.0) return 0.0;
+    return value > RTT_MAX_SECS ? RTT_MAX_SECS : value;
+}
 constexpr uint32_t KEEPALIVE_QUEUE_WAIT_MS = 120000;
 
 void secureZero(uint8_t* p, size_t n) {
@@ -223,7 +230,7 @@ bool RustLinkManager::ensureOwnedLink(const uint8_t dest[16], const uint8_t pubk
     }
     if (l && l->state == State::Active) return true;
     if (l && l->state == State::InitRequested) {
-        if (millis() - l->requestMs < l->establishmentTimeoutMs)
+        if (uint32_t(uint32_t(millis()) - l->requestMs) < l->establishmentTimeoutMs)
             return false;  // still establishing
         failSetup(*l);
         return false; // Let its owner recover the route before another handshake.
@@ -308,7 +315,7 @@ void RustLinkManager::onLrProof(Link& l, const rs_handheld_local_frame_t& f) {
     l.haveKey = true;
     secureZero(l.ephPriv, sizeof(l.ephPriv));
     // LRRTT activation (handshake msg 3): encrypted msgpack-f64 RTT in seconds.
-    l.rttSecs = (millis() - l.requestMs) / 1000.0;
+    l.rttSecs = boundedRtt(uint32_t(uint32_t(millis()) - l.requestMs) / 1000.0);
     uint8_t rttMp[9];
     packF64(l.rttSecs, rttMp);
     uint8_t iv[16], enc[64];
@@ -332,7 +339,9 @@ void RustLinkManager::onLrProof(Link& l, const rs_handheld_local_frame_t& f) {
 
 void RustLinkManager::updateKeepalive(Link& l, double rttSecs) {
     // Link.py:844-846: keepalive = clamp(rtt * (360/1.75), 5, 360)s; stale = 2*keepalive.
-    double ka = rttSecs * KEEPALIVE_PER_RTT * 1000.0;
+    l.rttSecs = boundedRtt(rttSecs);
+    l.staleGraceMs = uint32_t(l.rttSecs * 4000.0) + STALE_GRACE_MS;
+    double ka = l.rttSecs * KEEPALIVE_PER_RTT * 1000.0;
     if (ka < (double)KEEPALIVE_MIN_MS) ka = (double)KEEPALIVE_MIN_MS;
     if (ka > (double)KEEPALIVE_MS) ka = (double)KEEPALIVE_MS;
     l.keepaliveMs = (uint32_t)ka;
@@ -462,49 +471,41 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
         f.payload[0] == 0xFF) {
         return;
     }
-    const auto credit = [&l] {
-        l.lastInboundMs = millis();
+    const auto generation = _generations[&l - _links];
+    const auto credit = [this, &l, generation] {
+        if (_generations[&l - _links] != generation || l.state == State::Free || l.state == State::Closed) return;
+        l.lastInboundMs = uint32_t(millis());
         if (l.initiator) l.keepalivePending = false;
         if (l.state == State::Stale) l.state = State::Active;
     };
-    // Voice credits only accepted protocol keepalives or authenticated traffic.
-    // Invalid ciphertext must not extend an audio session's lifetime.
-    if (l.owner != Owner::Voice) credit();
+    // Liveness belongs to authenticated/accepted protocol traffic. Callback
+    // reentry cannot credit a replacement occupant of this same slot.
 
     if (f.context == RustWire::CTX_LRRTT) {
-        if (l.initiator || (l.owner == Owner::Voice && l.state != State::RespPending)) return;
-        // Responder activation: decrypt the initiator's RTT and take
-        // max(measured, received) for the keepalive interval (Link.py:534-541).
-        uint8_t pt[32];
-        size_t ptLen = 0;
-        if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len, pt, sizeof(pt),
-                                         &ptLen) == RS_HANDHELD_OK) {
-            double received = 0;
-            double measured = (millis() - l.requestMs) / 1000.0;
-            if (l.owner == Owner::Voice && (!unpackF64(pt, ptLen, &received) || !isfinite(received) || received < 0)) return;
-            if (unpackF64(pt, ptLen, &received) && received > measured) measured = received;
-            if (l.owner == Owner::Voice) credit();
-            l.rttSecs = measured;
-            l.state = State::Active;
-            updateKeepalive(l, l.rttSecs);
-            Serial.println("[RUST-LINK] responder link ACTIVE (LRRTT received)");
-            if (l.owner == Owner::Voice && _voiceSink)
-                _voiceSink->onVoiceLink(handle(l), true, l.iface, l.hops);
-        }
+        if (l.initiator || (l.state != State::RespPending && l.state != State::Active && l.state != State::Stale) ||
+            (l.owner == Owner::Voice && l.state != State::RespPending)) return;
+        uint8_t pt[32]; size_t ptLen = 0; double received = 0;
+        if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len, pt, sizeof(pt), &ptLen) != RS_HANDHELD_OK ||
+            !unpackF64(pt, ptLen, &received)) return;
+        if (l.owner == Owner::Voice && (!isfinite(received) || received < 0)) return;
+        double measured = l.state == State::RespPending
+            ? uint32_t(uint32_t(millis()) - l.requestMs) / 1000.0 : l.rttSecs;
+        // NaN and negative peer values never win the full Rust max comparison.
+        if (received > measured) measured = received;
+        updateKeepalive(l, measured);
+        credit();
+        l.state = State::Active;
+        Serial.println("[RUST-LINK] responder link ACTIVE (LRRTT received)");
+        if (l.owner == Owner::Voice && _voiceSink)
+            _voiceSink->onVoiceLink(handle(l), true, l.iface, l.hops);
         return;
     }
     if (f.context == RustWire::CTX_KEEPALIVE) {
-        if (l.owner == Owner::Voice) {
-            if ((l.state != State::Active && l.state != State::Stale) || f.payload_len != 1 ||
-                f.payload[0] != (l.initiator ? 0xFE : 0xFF)) return;
-            credit();
-        }
-        // Responder echoes 0xFE to a 0xFF request, plaintext (Link.py:1149-1153,
-        // Packet.py:205-208); an inbound 0xFE is liveness credit only.
-        if (!l.initiator && f.payload_len == 1 && f.payload[0] == 0xFF) {
-            queueKeepalive(l);
-            retryKeepalive(l);
-        }
+        if ((l.state != State::Active && l.state != State::Stale) || f.payload_len != 1 ||
+            f.payload[0] != (l.initiator ? 0xFE : 0xFF)) return;
+        credit();
+        // Canonical plaintext keepalives preserve the protocol exception.
+        if (!l.initiator) { queueKeepalive(l); retryKeepalive(l); }
         return;
     }
     if (f.context == RustWire::CTX_LINKCLOSE) {
@@ -520,6 +521,7 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
         }
         return;
     }
+    if (l.state != State::Active && l.state != State::Stale) return;
     if (l.owner == Owner::Voice) {
         if ((l.state != State::Active && l.state != State::Stale) || !_voiceSink) return;
         if (f.context == RustWire::CTX_LINKIDENTIFY && !l.initiator && !l.identified) {
@@ -558,22 +560,31 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
             }
             return;
         }
-        if (_d.resources) _d.resources->onLinkFrame(l.peerDest, l.linkId, l.sessionKey, l.iface, f);
+        if (_d.resources && _d.resources->onLinkFrame(l.peerDest, l.linkId, l.sessionKey, l.iface, f)) credit();
         return;
     }
-    if (l.owner == Owner::Delivery && f.context == RustWire::CTX_RESPONSE && l.initiator && l.state == State::Active) {
+    if (f.context == RustWire::CTX_LINKIDENTIFY && !l.initiator) {
+        uint8_t plaintext[128], publicKey[64]; size_t length = 0;
+        if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len,
+            plaintext, sizeof plaintext, &length) == RS_HANDHELD_OK &&
+            rs_handheld_rns_link_verify_identification(l.linkId, plaintext, length, publicKey) == RS_HANDHELD_OK) credit();
+        return;
+    }
+    if (l.owner == Owner::Delivery && f.context == RustWire::CTX_RESPONSE && l.initiator) {
         uint8_t pt[RS_HANDHELD_LINK_MDU]; size_t length = 0;
         if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len,
-                pt, sizeof pt, &length) == RS_HANDHELD_OK)
-            completeResponse(l.iface, l.linkId, pt, length);
+                pt, sizeof pt, &length) == RS_HANDHELD_OK &&
+            completeResponse(l.iface, l.linkId, pt, length)) credit();
         return;
     }
     if (l.owner == Owner::Rrc) {
-        if (f.context == RustWire::CTX_NONE && l.state == State::Active && l.identified && _rrcSink) {
+        if (f.context == RustWire::CTX_NONE && l.identified && _rrcSink) {
             uint8_t plaintext[RS_HANDHELD_LINK_MDU]; size_t length = 0;
             if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len,
-                plaintext, sizeof plaintext, &length) == RS_HANDHELD_OK)
+                plaintext, sizeof plaintext, &length) == RS_HANDHELD_OK) {
+                credit();
                 _rrcSink->onRrcPacket(handle(l), plaintext, length, f.packet_hash);
+            }
         }
         return;
     }
@@ -584,6 +595,7 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
         if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len, pt, sizeof(pt),
                                          &ptLen) == RS_HANDHELD_OK &&
             _d.lxmf) {
+            credit();
             RustIncomingDelivery::ReceiptSeed seed;
             uint8_t raw[128]; size_t rawLen = 0;
             if (!l.initiator) {
@@ -808,7 +820,7 @@ void RustLinkManager::loop() {
     if (_request.sink && !requestLive()) failRequest(RequestError::Timeout);
     if (_rrcTx.sequence && !rrcTxLive()) rrcReceipt({_rrcTx.sequence, RrcReceiptSlot}, handheld::TxReceiptEvent::Dropped);
     if (_voiceTx.sequence && !voiceTxLive()) voiceReceipt({_voiceTx.sequence, VoiceReceiptSlot}, handheld::TxReceiptEvent::Dropped);
-    unsigned long now = millis();
+    uint32_t now = uint32_t(millis());
     for (auto& l : _links) {
         if (l.owner != Owner::Delivery && l.state != State::Free && l.state != State::Closed &&
             (!_d.pump || !l.interfaceGeneration || _d.pump->interfaceGeneration(l.iface) != l.interfaceGeneration)) {
@@ -840,9 +852,7 @@ void RustLinkManager::loop() {
             // LINKCLOSE teardown (encrypted link_id) + close, reason TIMEOUT. Note:
             // Python's WATCHDOG_MAX_SLEEP(5) caps its effective grace at ~5s; we honor
             // the nominal value — more lenient on high-RTT (LoRa) links, wire-neutral.
-            unsigned long grace =
-                (unsigned long)(l.rttSecs * KEEPALIVE_TIMEOUT_FACTOR * 1000.0) + STALE_GRACE_MS;
-            if (now - l.staleSinceMs >= grace) {
+            if (uint32_t(now - l.staleSinceMs) >= l.staleGraceMs) {
                 sendTeardown(l);
                 Serial.println("[RUST-LINK] link stale; closing");
                 closeLink(l);
@@ -850,7 +860,7 @@ void RustLinkManager::loop() {
         } else if (l.state == State::RespPending) {
             // Responder awaiting LRRTT: Link.py:207 establishment timeout
             // (per-hop x max(1,hops) + KEEPALIVE), not the stale sweep.
-            unsigned long timeout = l.owner == Owner::Voice ? 30000 :
+            uint32_t timeout = l.owner == Owner::Voice ? 30000 :
                 ESTABLISHMENT_TIMEOUT_PER_HOP_MS * (l.hops < 1 ? 1 : l.hops) + KEEPALIVE_MS;
             if (now - l.requestMs > timeout) {
                 Serial.println("[RUST-LINK] responder link never activated; closing");

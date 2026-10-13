@@ -490,6 +490,7 @@ mod tests {
                         &buffer[..count],
                         source.public_key(),
                         &mut scratch,
+                        &mut lxmf_codec::LxmfFieldScratch::new(),
                     )
                     .unwrap();
                     assert_eq!(view.message_id, mid);
