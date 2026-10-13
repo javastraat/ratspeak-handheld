@@ -4,8 +4,10 @@
 #include "util/Bytes.h"
 #include "storage/MirrorWriteState.h"
 #include <dirent.h>
+#include <functional>
 #include <vector>
 #include <string>
+#include <string_view>
 #include <map>
 
 class SDStore;
@@ -73,7 +75,7 @@ private:
     void flushContactMirrors();
     void closeContactMirrorDirectory();
     bool mirrorContact(const char* filename);
-    bool cacheName(const std::string& hash, const std::string& name);
+    bool cacheName(std::string_view hash, std::string_view name);
     int findNodeIndex(const uint8_t* hash, size_t length) const;
     int findNodeIndexHex(const std::string& hash) const;
 
@@ -94,7 +96,8 @@ private:
     bool _nameCachePersistenceBlocked = false;
     unsigned long _lastContactSave = 0;
     unsigned long _lastNameCacheSave = 0;
-    std::map<std::string, std::string> _nameCache;  // hexHash → displayName
+    // Transparent comparison: lookups by a stack hex view allocate nothing.
+    std::map<std::string, std::string, std::less<>> _nameCache;  // hexHash → displayName
     unsigned long _globalAnnounceWindowStart = 0;
     unsigned int _globalAnnounceCount = 0;
     static constexpr unsigned int MAX_GLOBAL_ANNOUNCES_PER_SEC = ANNOUNCE_MAX_GLOBAL_PER_SEC;

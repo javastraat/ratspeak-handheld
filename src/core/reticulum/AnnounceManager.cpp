@@ -153,7 +153,7 @@ template<class Visit> bool readNames(File& file, Visit visit) {
 
 class NameCacheSource final : public handheld::storage::AtomicSource {
 public:
-    explicit NameCacheSource(const std::map<std::string, std::string>& names) : _names(names) {
+    explicit NameCacheSource(const std::map<std::string, std::string, std::less<>>& names) : _names(names) {
         struct Counter final : handheld::storage::ByteSink {
             size_t count = 0;
             size_t write(const uint8_t*, size_t size) override { count += size; return size; }
@@ -178,7 +178,7 @@ public:
         return sink.write('}') == 1;
     }
 private:
-    const std::map<std::string, std::string>& _names;
+    const std::map<std::string, std::string, std::less<>>& _names;
     size_t _length = 0;
 };
 } // namespace
@@ -216,14 +216,15 @@ static size_t mpSkipValue(const uint8_t* data, size_t len, size_t pos) {
 }
 
 // Two-pass: prefer str elements (display name), fall back to bin (NomadNet compat).
-static std::string extractMsgPackName(const uint8_t* data, size_t len) {
-    if (len < 2) return "";
+// The result views the caller's announce bytes; nothing is copied.
+static std::string_view extractMsgPackName(const uint8_t* data, size_t len) {
+    if (len < 2) return {};
     uint8_t b = data[0];
     size_t pos = 0;
     size_t arrLen = 0;
     if ((b & 0xF0) == 0x90) { arrLen = b & 0x0F; if (arrLen == 0) return ""; pos = 1; }
     else if (b == 0xDC && len >= 3) { arrLen = ((size_t)data[1] << 8) | data[2]; pos = 3; }
-    else return "";
+    else return {};
 
     // Pass 1: scan for first non-empty STR element
     size_t savedPos = pos;
@@ -234,7 +235,7 @@ static std::string extractMsgPackName(const uint8_t* data, size_t len) {
         else if (b == 0xD9 && pos + 1 < len) { slen = data[pos + 1]; pos += 2; }
         else if (b == 0xDA && pos + 2 < len) { slen = ((size_t)data[pos + 1] << 8) | data[pos + 2]; pos += 3; }
         else { pos = mpSkipValue(data, len, pos); continue; }
-        if (slen > 0 && pos + slen <= len) return std::string((const char*)&data[pos], slen);
+        if (slen > 0 && pos + slen <= len) return {(const char*)&data[pos], slen};
         pos += slen;
     }
 
@@ -246,46 +247,76 @@ static std::string extractMsgPackName(const uint8_t* data, size_t len) {
         if (b == 0xC4 && pos + 1 < len) { slen = data[pos + 1]; pos += 2; }
         else if (b == 0xC5 && pos + 2 < len) { slen = ((size_t)data[pos + 1] << 8) | data[pos + 2]; pos += 3; }
         else { pos = mpSkipValue(data, len, pos); continue; }
-        if (slen > 0 && pos + slen <= len) return std::string((const char*)&data[pos], slen);
+        if (slen > 0 && pos + slen <= len) return {(const char*)&data[pos], slen};
         pos += slen;
     }
-    return "";
+    return {};
 }
 
 // Character filter — safe displayable characters including UTF-8 multibyte
-// (lvgl renders missing glyphs as fallback boxes — cosmetic, accepted)
-static std::string sanitizeName(std::string_view raw, size_t maxLen = 32) {
-    std::string clean;
-    clean.reserve(std::min(raw.size(), maxLen));
+// (lvgl renders missing glyphs as fallback boxes — cosmetic, accepted).
+// Up to 32 bytes plus one final multibyte sequence; the view borrows `clean`.
+constexpr size_t NameBytes = 36;
+static std::string_view sanitizeName(std::string_view raw, char (&clean)[NameBytes], size_t maxLen = 32) {
+    size_t used = 0;
     const uint8_t* p = (const uint8_t*)raw.data();
     size_t sz = raw.size();
-    for (size_t i = 0; i < sz && clean.size() < maxLen; ) {
+    for (size_t i = 0; i < sz && used < maxLen; ) {
         uint8_t c = p[i];
+        size_t width = 0;
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
             (c >= '0' && c <= '9') ||
-            c == ' ' || c == '-' || c == '_' || c == '.' || c == '\'' || c == '/') {
-            clean += (char)c;
-            i++;
-        }
+            c == ' ' || c == '-' || c == '_' || c == '.' || c == '\'' || c == '/') width = 1;
         // UTF-8 multibyte: pass through valid sequences (emoji/accents)
-        else if ((c & 0xE0) == 0xC0 && i + 1 < sz && (p[i+1] & 0xC0) == 0x80) {
-            clean.append((const char*)&p[i], 2); i += 2;
-        }
+        else if ((c & 0xE0) == 0xC0 && i + 1 < sz && (p[i+1] & 0xC0) == 0x80) width = 2;
         else if ((c & 0xF0) == 0xE0 && i + 2 < sz &&
-                 (p[i+1] & 0xC0) == 0x80 && (p[i+2] & 0xC0) == 0x80) {
-            clean.append((const char*)&p[i], 3); i += 3;
-        }
+                 (p[i+1] & 0xC0) == 0x80 && (p[i+2] & 0xC0) == 0x80) width = 3;
         else if ((c & 0xF8) == 0xF0 && i + 3 < sz &&
-                 (p[i+1] & 0xC0) == 0x80 && (p[i+2] & 0xC0) == 0x80 && (p[i+3] & 0xC0) == 0x80) {
-            clean.append((const char*)&p[i], 4); i += 4;
-        }
+                 (p[i+1] & 0xC0) == 0x80 && (p[i+2] & 0xC0) == 0x80 && (p[i+3] & 0xC0) == 0x80) width = 4;
         // Strip control chars, invalid bytes
-        else { i++; }
+        if (!width) { i++; continue; }
+        memcpy(clean + used, p + i, width); used += width; i += width;
     }
-    size_t start = clean.find_first_not_of(' ');
-    if (start == std::string::npos) return "";
-    size_t end = clean.find_last_not_of(' ');
-    return clean.substr(start, end - start + 1);
+    const std::string_view view(clean, used);
+    const size_t start = view.find_first_not_of(' ');
+    if (start == std::string_view::npos) return {};
+    return view.substr(start, view.find_last_not_of(' ') - start + 1);
+}
+
+static std::string sanitizeName(std::string_view raw) {
+    char clean[NameBytes];
+    return std::string(sanitizeName(raw, clean));
+}
+
+// received_announce parity: MsgPack name, else bare UTF-8 app data (Rust raw announces).
+static std::string_view announcedName(const uint8_t* appData, size_t appLen, char (&clean)[NameBytes]) {
+    if (!appData || !appLen) return {};
+    std::string_view raw = extractMsgPackName(appData, appLen);
+    if (raw.empty()) {
+        bool isText = appLen <= 64;
+        for (size_t i = 0; isText && i < appLen; ) {
+            uint8_t c = appData[i];
+            if ((c >= 0x20 && c <= 0x7E) || c == 0x09) { i++; }
+            else if ((c & 0xE0) == 0xC0 && i + 1 < appLen &&
+                     (appData[i+1] & 0xC0) == 0x80) { i += 2; }
+            else if ((c & 0xF0) == 0xE0 && i + 2 < appLen &&
+                     (appData[i+1] & 0xC0) == 0x80 &&
+                     (appData[i+2] & 0xC0) == 0x80) { i += 3; }
+            else if ((c & 0xF8) == 0xF0 && i + 3 < appLen &&
+                     (appData[i+1] & 0xC0) == 0x80 &&
+                     (appData[i+2] & 0xC0) == 0x80 &&
+                     (appData[i+3] & 0xC0) == 0x80) { i += 4; }
+            else { isText = false; }
+        }
+        if (isText) raw = {(const char*)appData, appLen};
+    }
+    return sanitizeName(raw, clean);
+}
+
+static void hexOf(const uint8_t bytes[16], char (&out)[33]) {
+    static constexpr char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < 16; ++i) { out[2*i] = digits[bytes[i] >> 4]; out[2*i+1] = digits[bytes[i] & 15]; }
+    out[32] = 0;
 }
 
 AnnounceManager::AnnounceManager(const char* aspectFilter) {
@@ -302,7 +333,7 @@ void AnnounceManager::setStorage(SDStore* sd, FlashStore* flash) {
     _sd = sd; _flash = flash;
 }
 
-bool AnnounceManager::cacheName(const std::string& hash, const std::string& name) {
+bool AnnounceManager::cacheName(std::string_view hash, std::string_view name) {
     auto found = _nameCache.find(hash);
     if (found != _nameCache.end() && found->second == name) return true;
     if (!handheld::config::Memory::admits(0)) return false;
@@ -322,7 +353,7 @@ bool AnnounceManager::cacheName(const std::string& hash, const std::string& name
             });
             if (victim == _nameCache.end()) return false;
         }
-        auto inserted = _nameCache.emplace(hash, name);
+        auto inserted = _nameCache.emplace(std::string(hash), std::string(name));
         if (!handheld::config::Memory::admits(0)) {
             _nameCache.erase(inserted.first); return false;
         }
@@ -385,75 +416,50 @@ void AnnounceManager::receivedAnnounceEvent(const uint8_t destHash[16], const ui
     // Background display/cache growth must leave the same reserve as Settings.
     // The protocol already owns the authenticated announce independently.
     if (!handheld::config::Memory::admits(0)) return;
+    // Name and hex keys are staged on the stack. Refreshing a known peer with
+    // unchanged metadata allocates nothing, so retained blocks never migrate.
+    char clean[NameBytes], destHex[33], idHex[33];
+    const std::string_view name = announcedName(appData, appLen, clean);
+    hexOf(destHash, destHex); hexOf(identityHash, idHex);
+    const std::string_view destination(destHex, 32), identity(idHex, 32);
     try {
-        std::string name;
-        if (appData && appLen > 0) {
-            std::string rawName = extractMsgPackName(appData, appLen);
-            if (rawName.empty()) {
-                // received_announce parity: bare UTF-8 app_data used as name (Rust raw announces)
-                bool isText = appLen <= 64;
-                for (size_t i = 0; isText && i < appLen; ) {
-                    uint8_t c = appData[i];
-                    if ((c >= 0x20 && c <= 0x7E) || c == 0x09) { i++; }
-                    else if ((c & 0xE0) == 0xC0 && i + 1 < appLen &&
-                             (appData[i+1] & 0xC0) == 0x80) { i += 2; }
-                    else if ((c & 0xF0) == 0xE0 && i + 2 < appLen &&
-                             (appData[i+1] & 0xC0) == 0x80 &&
-                             (appData[i+2] & 0xC0) == 0x80) { i += 3; }
-                    else if ((c & 0xF8) == 0xF0 && i + 3 < appLen &&
-                             (appData[i+1] & 0xC0) == 0x80 &&
-                             (appData[i+2] & 0xC0) == 0x80 &&
-                             (appData[i+3] & 0xC0) == 0x80) { i += 4; }
-                    else { isText = false; }
-                }
-                if (isText) rawName = std::string((const char*)appData, appLen);
-            }
-            name = sanitizeName(rawName);
-        }
-        static const char* H = "0123456789abcdef";
-        std::string idHex;
-        idHex.reserve(32);
-        for (int i = 0; i < 16; i++) {
-            idHex.push_back(H[identityHash[i] >> 4]);
-            idHex.push_back(H[identityHash[i] & 0xF]);
-        }
-        const rs::Bytes dh(destHash, 16);
-        const std::string destHex = dh.toHex();
-        if (!handheld::config::Memory::admits(0)) return;
+        // Optional names persist from loop(), coalescing bursts into one write.
+        const auto rememberName = [&] {
+            if (name.empty()) return;
+            const auto found = _nameCache.find(destination);
+            if ((found == _nameCache.end() || found->second != name) && cacheName(destination, name))
+                _nameCacheWrites.changed();
+        };
         if (existing >= 0) {
             auto& node = _nodes[size_t(existing)];
             const bool unnamed = node.name.empty() ||
-                (node.name.size() == 12 && !memcmp(node.name.data(), destHex.data(), 12));
-            if (!name.empty()) {
-                const auto found = _nameCache.find(destHex);
-                if ((found == _nameCache.end() || found->second != name) && cacheName(destHex, name)) {
-                    _nameCacheWrites.changed(); saveNameCache();
-                }
-            }
-            // Moves cannot fail after the staged strings passed admission.
-            if (!name.empty() && (unnamed || !node.saved || !HAS_CONTACT_RENAME)) node.name = std::move(name);
-            node.identityHex = std::move(idHex);
-            if (node.saved) _contactsDirty = true;
+                (node.name.size() == 12 && !memcmp(node.name.data(), destHex, 12));
+            rememberName();
+            const bool rename = !name.empty() && (unnamed || !node.saved || !HAS_CONTACT_RENAME) && node.name != name;
+            const bool rebind = node.identityHex != identity;
+            if (!rename && !rebind) return;
+            // Name and identity remain one prepared metadata publication.
+            std::string nextName(rename ? name : std::string_view()), nextIdentity(rebind ? identity : std::string_view());
+            if (!handheld::config::Memory::admits(0)) return;
+            if (rename) node.name.swap(nextName);
+            if (rebind) node.identityHex.swap(nextIdentity);
+            if (rename && node.saved) _contactsDirty = true; // Contact records hold only hash and name.
             return;
         }
 
         // Prepare the entire replacement before evicting any live peer.
         DiscoveredNode node;
-        node.hash = dh;
-        if (!name.empty()) node.name = name;
+        node.hash = rs::Bytes(destHash, 16);
+        if (!name.empty()) node.name.assign(name.data(), name.size());
         else {
-            const auto cached = _nameCache.find(destHex);
-            node.name = cached != _nameCache.end() && !cached->second.empty() ? cached->second : destHex.substr(0, 12);
+            const auto cached = _nameCache.find(destination);
+            if (cached != _nameCache.end() && !cached->second.empty()) node.name = cached->second;
+            else node.name.assign(destHex, 12);
         }
-        node.identityHex = std::move(idHex);
+        node.identityHex.assign(identity.data(), identity.size());
         node.lastSeen = now; node.hops = hops; node.rssi = rssi; node.snr = snr;
         if (!handheld::config::Memory::admits(0)) return;
-        if (!name.empty()) {
-            const auto found = _nameCache.find(destHex);
-            if ((found == _nameCache.end() || found->second != name) && cacheName(destHex, name)) {
-                _nameCacheWrites.changed(); saveNameCache();
-            }
-        }
+        rememberName();
         if (_nodes.size() >= MAX_NODES) {
             evictStale();
             if (_nodes.size() >= MAX_NODES) {
@@ -471,7 +477,7 @@ void AnnounceManager::receivedAnnounceEvent(const uint8_t destHash[16], const ui
         }
         // Constructor reserves the bounded table. A move adds no heap allocation.
         _nodes.push_back(std::move(node));
-        Serial.printf("[ANNOUNCE-RUST] new peer %s name=\"%s\" hops=%u\n", destHex.c_str(), _nodes.back().name.c_str(), unsigned(hops));
+        Serial.printf("[ANNOUNCE-RUST] new peer %s name=\"%s\" hops=%u\n", destHex, _nodes.back().name.c_str(), unsigned(hops));
     } catch (const std::bad_alloc&) {
         // A later announce may refresh metadata; existing peers remain usable.
     }
@@ -490,8 +496,9 @@ void AnnounceManager::loop() {
         _lastContactSave = now;
         saveContacts();
     }
-    // Deferral safety net only — saves normally happen inline on change.
-    // Pre-advance the stamp so a low-heap deferral retries at cadence, not every pass.
+    // Optional names save here, at most once per interval; a burst of learned
+    // names becomes one write. Pre-advance the stamp so a low-heap deferral
+    // retries at cadence, not every pass.
     if (_nameCacheWrites.dirty() && now - _lastNameCacheSave >= CONTACT_SAVE_INTERVAL_MS) {
         _lastNameCacheSave = now;
         saveNameCache();
