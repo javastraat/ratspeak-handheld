@@ -86,7 +86,7 @@ private:
 
     // WiFi scanner
     void startWiFiScan();
-    void buildScanResultsMenu();
+    void buildScanResultsMenu(bool preserveBack = false);
     void selectNetwork(int index);
     void disconnectWiFi();
     void connectWiFi();

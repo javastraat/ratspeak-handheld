@@ -30,17 +30,16 @@ public:
     void setSTACredentials(const char* ssid, const char* password);
     bool isSTAConnected() const;
 
-    // WiFi scanner (async: call startScan, poll with getScanResults)
+    // Scan driver helpers; WiFiConnection owns admission, deadlines and retirement.
     struct ScanResult {
         String ssid;
         int rssi;
         bool encrypted;
     };
-    static std::vector<ScanResult> scanNetworks(int maxResults = 15);
     // False when mode initialization or SDK scan admission fails.
     static bool startAsyncScan();
-    static bool isScanComplete();
-    // Reads at most15 strongest unique rows; caller retires SDK results with scanDelete.
+    // Reads at most 15 unique rows from the bounded SDK snapshot. May throw on
+    // allocation failure; WiFiConnection handles it and retires SDK storage.
     static std::vector<ScanResult> getScanResults(int maxResults = 15);
 
     // Raw-frame seam for the backend pump (TCPClientInterface precedent):

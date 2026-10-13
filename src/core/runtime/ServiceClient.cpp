@@ -388,7 +388,12 @@ bool ServiceClient::scan(Completion completion) {
     Request request; request.operation = Operation::Scan;
     return submit(request, "", 4096, [this, completion](const Result& result, const char* data) {
         _scanJson = result.outcome == Outcome::Ok ? data : "[]";
-        if (completion) completion(result);
+        Result checked = result;
+        if (result.outcome == Outcome::Ok && _scanJson.length() != result.length) {
+            checked.outcome = Outcome::NoMemory;
+            checked.length = 0;
+        }
+        if (completion) completion(checked);
     }) != 0;
 }
 uint32_t ServiceClient::lifecycle(Operation operation, const std::string& identity) {

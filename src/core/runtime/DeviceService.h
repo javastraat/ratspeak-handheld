@@ -47,7 +47,7 @@ public:
     std::function<bool()> settlementFailed;
     std::function<void()> beginQuiesce;
     std::function<bool()> quiescent;
-    std::function<void()> startScan;
+    std::function<bool()> startScan;
     std::function<ScanResult(String&)> finishScan;
 
 private:

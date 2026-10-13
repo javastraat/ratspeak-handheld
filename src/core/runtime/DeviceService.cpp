@@ -188,11 +188,13 @@ void DeviceService::poll() {
         if (scan != ScanResult::Pending) {
             Result result;
             result.outcome = scan == ScanResult::Cancelled ? Outcome::Cancelled : Outcome::Failed;
+            if (scan == ScanResult::NoMemory) result.outcome = Outcome::NoMemory;
             if (scan == ScanResult::Ready && !json.isEmpty() &&
                 json.length() <= _mailbox.capacity(_scanSlot) &&
                 _mailbox.write(_scanSlot, json.c_str(), json.length())) {
                 result.length = json.length(); result.outcome = Outcome::Ok;
-            } else strlcpy(result.detail, scan == ScanResult::Cancelled ? "Scan cancelled" : "Scan failed",
+            } else strlcpy(result.detail, scan == ScanResult::Cancelled ? "Scan cancelled" :
+                           scan == ScanResult::NoMemory ? "Not enough memory" : "Scan failed",
                            sizeof(result.detail));
             _mailbox.complete(_scanSlot, result);
             _scanSlot = ServiceMailbox::NoSlot;
@@ -702,7 +704,8 @@ void DeviceService::execute(uint8_t slot) {
     }
     case Operation::Scan:
         if (_scanSlot != ServiceMailbox::NoSlot || !startScan || !finishScan) { complete(slot, Outcome::Failed, "Scan unavailable"); break; }
-        _scanSlot = slot; _status.scanRunning = true; startScan(); break;
+        if (!startScan()) { complete(slot, Outcome::NotReady, "Scan unavailable; retry"); break; }
+        _scanSlot = slot; _status.scanRunning = true; break;
     case Operation::HomeReady:
         if (homeReady) homeReady(); complete(slot, Outcome::Ok); break;
     case Operation::Diagnostics:

@@ -898,7 +898,7 @@ void setup() {
         case 4: diagnostics.startRssiMonitor(); break;
         }
     };
-    deviceService.startScan = []() { wifiConnection.startScan(); };
+    deviceService.startScan = []() { return wifiConnection.startScan(); };
     deviceService.finishScan = [](String& json) { return wifiConnection.finishScan(json); };
     deviceService.closeAdmissions = []() {
         announceScheduler.stop();

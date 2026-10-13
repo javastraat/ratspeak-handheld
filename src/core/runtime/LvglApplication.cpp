@@ -945,7 +945,7 @@ void handheld::lvgl_application::setup() {
         case 4: deviceDiagnostics.startRssiMonitor(); break;
         }
     };
-    deviceService.startScan = []() { wifiConnection.startScan(); };
+    deviceService.startScan = []() { return wifiConnection.startScan(); };
     deviceService.finishScan = [](String& json) { return wifiConnection.finishScan(json); };
     deviceService.closeAdmissions = []() {
         remoteUi.close();

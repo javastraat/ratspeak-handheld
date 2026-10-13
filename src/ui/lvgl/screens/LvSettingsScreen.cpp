@@ -1185,9 +1185,11 @@ void LvSettingsScreen::showWifiPicker() {
         _wifiResults.clear();
         if (result.outcome == handheld::Outcome::Ok) {
             JsonDocument doc;
-            if (deserializeJson(doc, _service->scanJson()) ||
+            const auto error = deserializeJson(doc, _service->scanJson());
+            if (error ||
                 !doc.is<JsonArray>() || doc.size() > 15) {
-                _wifiScanOutcome = handheld::Outcome::Failed;
+                _wifiScanOutcome = error == DeserializationError::NoMemory ?
+                    handheld::Outcome::NoMemory : handheld::Outcome::Failed;
             } else {
                 for (JsonObject row : doc.as<JsonArray>()) {
                     if (!row["ssid"].is<const char*>() || !row["rssi"].is<int>() ||
@@ -1199,12 +1201,12 @@ void LvSettingsScreen::showWifiPicker() {
                     WiFiInterface::ScanResult network;
                     const char* ssid = row["ssid"].as<const char*>();
                     if (!UserConfig::trySetString(network.ssid, ssid, strlen(ssid))) {
-                        _wifiResults.clear(); _wifiScanOutcome = handheld::Outcome::Failed; break;
+                        _wifiResults.clear(); _wifiScanOutcome = handheld::Outcome::NoMemory; break;
                     }
                     network.rssi = row["rssi"].as<int>(); network.encrypted = row["encrypted"].as<bool>();
                     try { _wifiResults.push_back(std::move(network)); }
                     catch (const std::bad_alloc&) {
-                        _wifiResults.clear(); _wifiScanOutcome = handheld::Outcome::Failed; break;
+                        _wifiResults.clear(); _wifiScanOutcome = handheld::Outcome::NoMemory; break;
                     }
                 }
             }
@@ -1593,6 +1595,9 @@ void LvSettingsScreen::selectWifiResult(int resultIdx) {
 
 void LvSettingsScreen::rebuildWifiList() {
     if (!_scrollContainer) return;
+    auto* focused = lv_group_get_focused(LvInput::group());
+    const bool preserveBack = focused && lv_obj_get_parent(focused) == _scrollContainer &&
+        (intptr_t)lv_obj_get_user_data(focused) == -2;
     _rowObjs.clear();
     lv_obj_clean(_scrollContainer);
 
@@ -1618,6 +1623,9 @@ void LvSettingsScreen::rebuildWifiList() {
 
     // Make header tappable to go back
     lv_obj_add_flag(headerRow, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_user_data(headerRow, (void*)(intptr_t)-2);
+    lv_obj_add_style(headerRow, LvTheme::styleListBtnFocused(), LV_STATE_FOCUSED);
+    lv_group_add_obj(LvInput::group(), headerRow);
     lv_obj_add_event_cb(headerRow, [](lv_event_t* e) {
         auto* self = (LvSettingsScreen*)lv_event_get_user_data(e);
         self->_wifiScanActive = false;
@@ -1625,14 +1633,14 @@ void LvSettingsScreen::rebuildWifiList() {
         self->rebuildItemList();
     }, LV_EVENT_CLICKED, this);
 
-    if (_wifiResults.empty()) {
+    if (_wifiResults.empty() && !_wifiScanActive) {
         lv_obj_t* emptyLbl = lv_label_create(_scrollContainer);
         lv_obj_set_style_text_font(emptyLbl, font, 0);
         lv_obj_set_style_text_color(emptyLbl, lv_color_hex(Theme::TEXT_MUTED), 0);
         lv_label_set_text(emptyLbl, _wifiScanActive ? "Scanning..." :
             _wifiScanOutcome == handheld::Outcome::Ok ? "No networks found" :
-            _wifiScanOutcome == handheld::Outcome::Cancelled ? "Scan cancelled" : "Scan failed");
-        return;
+            _wifiScanOutcome == handheld::Outcome::Cancelled ? "Scan cancelled" :
+            _wifiScanOutcome == handheld::Outcome::NoMemory ? "Not enough memory" : "Scan failed");
     }
 
     for (int i = 0; i < (int)_wifiResults.size(); i++) {
@@ -1681,6 +1689,28 @@ void LvSettingsScreen::rebuildWifiList() {
 
         _rowObjs.push_back(row);
     }
+    {
+        lv_obj_t* retry = lv_btn_create(_scrollContainer);
+        lv_obj_set_size(retry, Theme::CONTENT_W, 26);
+        lv_obj_add_style(retry, LvTheme::styleListBtn(), 0);
+        lv_obj_add_style(retry, LvTheme::styleListBtnFocused(), LV_STATE_FOCUSED);
+        lv_obj_set_user_data(retry, (void*)(intptr_t)-1);
+        lv_obj_t* label = lv_label_create(retry);
+        lv_obj_set_style_text_font(label, font, 0);
+        lv_obj_set_style_text_color(label, lv_color_hex(Theme::PRIMARY), 0);
+        lv_label_set_text(label, _wifiScanActive ? "Scanning..." : "Rescan");
+        lv_obj_center(label);
+        lv_group_add_obj(LvInput::group(), retry);
+        lv_obj_add_event_cb(retry, [](lv_event_t* e) {
+            auto* self = (LvSettingsScreen*)lv_event_get_user_data(e);
+            if (!self->_wifiScanActive) self->showWifiPicker();
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_add_event_cb(retry, [](lv_event_t* e) {
+            lv_obj_scroll_to_view(lv_event_get_target(e), LV_ANIM_ON);
+        }, LV_EVENT_FOCUSED, nullptr);
+        if (!preserveBack) lv_group_focus_obj(_rowObjs.empty() ? retry : _rowObjs.front());
+    }
+    if (preserveBack) lv_group_focus_obj(headerRow);
 }
 
 void LvSettingsScreen::updateCategorySelection(int oldIdx, int newIdx) {
@@ -2031,11 +2061,16 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
         case SettingsView::WIFI_PICKER: {
             // LVGL handles up/down navigation, click handler handles selection
             if (event.enter || event.character == '\n' || event.character == '\r') {
-                if (_wifiScanActive) return true;
+                if (event.repeat) return true;
                 lv_obj_t* focused = lv_group_get_focused(LvInput::group());
                 if (focused) {
                     int idx = (int)(intptr_t)lv_obj_get_user_data(focused);
-                    if (idx < (int)_wifiResults.size()) {
+                    if (idx == -1) {
+                        if (!_wifiScanActive) showWifiPicker();
+                        return true;
+                    }
+                    if (_wifiScanActive && idx != -2) return true;
+                    if (idx >= 0 && idx < (int)_wifiResults.size()) {
                         selectWifiResult(idx);
                     }
                 }

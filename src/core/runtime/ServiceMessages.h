@@ -20,7 +20,7 @@ enum class Operation : uint8_t {
     EnableSDAndRestart, ClearOldDataAndRestart
 };
 enum class Admission : uint8_t { Admitted, Busy, NotReady, Invalid };
-enum class Outcome : uint8_t { Ok, Failed, Stale, Invalid, NotReady, Cancelled };
+enum class Outcome : uint8_t { Ok, Failed, Stale, Invalid, NotReady, Cancelled, NoMemory };
 enum class ServiceState : uint8_t { Starting, Running, Quiescing, Stopped, Failed };
 
 constexpr bool lifecycleOperation(Operation op) {

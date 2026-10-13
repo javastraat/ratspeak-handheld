@@ -332,8 +332,10 @@ bool SettingsScreen::pollNetworkResults() {
     _scanPending = false; _scanOutcome = result; _scanResults.clear();
     if (result == handheld::ScanResult::Ready) {
         JsonDocument doc;
-        if (deserializeJson(doc, json) || !doc.is<JsonArray>() || doc.size() > 15) {
-            _scanOutcome = handheld::ScanResult::Failed;
+        const auto error = deserializeJson(doc, json);
+        if (error || !doc.is<JsonArray>() || doc.size() > 15) {
+            _scanOutcome = error == DeserializationError::NoMemory ?
+                handheld::ScanResult::NoMemory : handheld::ScanResult::Failed;
         } else {
             for (const auto row : doc.as<JsonArray>()) {
                 if (!row["ssid"].is<const char*>() || !row["rssi"].is<int>() || !row["encrypted"].is<bool>()) {
@@ -342,32 +344,35 @@ bool SettingsScreen::pollNetworkResults() {
                 WiFiNetwork network;
                 const char* ssid = row["ssid"].as<const char*>();
                 if (!UserConfig::trySetString(network.ssid, ssid, strlen(ssid))) {
-                    _scanResults.clear(); _scanOutcome = handheld::ScanResult::Failed; break;
+                    _scanResults.clear(); _scanOutcome = handheld::ScanResult::NoMemory; break;
                 }
                 network.rssi = row["rssi"].as<int>();
                 network.encType = row["encrypted"].as<bool>() ? 1 : WIFI_AUTH_OPEN;
                 try { _scanResults.push_back(std::move(network)); }
                 catch (const std::bad_alloc&) {
-                    _scanResults.clear(); _scanOutcome = handheld::ScanResult::Failed; break;
+                    _scanResults.clear(); _scanOutcome = handheld::ScanResult::NoMemory; break;
                 }
             }
         }
     }
-    if (result == handheld::ScanResult::Ready && _scanOutcome == handheld::ScanResult::Failed)
+    if (result == handheld::ScanResult::Ready && _scanOutcome != handheld::ScanResult::Ready)
         Serial.printf("[WIFI] Scan results unavailable (bytes=%u heap=%lu largest=%lu)\n",
                       (unsigned)json.length(), (unsigned long)ESP.getFreeHeap(),
                       (unsigned long)ESP.getMaxAllocHeap());
-    if (_subMenu == MENU_WIFI_SCAN) buildScanResultsMenu();
+    if (_subMenu == MENU_WIFI_SCAN)
+        buildScanResultsMenu(_list.getSelectedIndex() == _list.itemCount() - 1);
     return true;
 }
 
-void SettingsScreen::buildScanResultsMenu() {
+void SettingsScreen::buildScanResultsMenu(bool preserveBack) {
     _list.clear();
 
     if (_scanPending) {
         _list.addItem("Scanning...");
     } else if (_scanOutcome == handheld::ScanResult::Failed) {
         _list.addItem("Scan failed; retry");
+    } else if (_scanOutcome == handheld::ScanResult::NoMemory) {
+        _list.addItem("Not enough memory; retry");
     } else if (_scanOutcome == handheld::ScanResult::Cancelled) {
         _list.addItem("Scan cancelled");
     } else if (_scanResults.empty()) {
@@ -384,6 +389,10 @@ void SettingsScreen::buildScanResultsMenu() {
 
     _list.addItem("Rescan");
     _list.addItem("< Back");
+    // Status rows are informational. Leave retry usable after a failure and
+    // retain Back if the user deliberately moved there while scanning.
+    _list.setSelected(preserveBack ? _list.itemCount() - 1 :
+        _scanResults.empty() ? _list.itemCount() - 2 : 0);
 }
 
 void SettingsScreen::disconnectWiFi() {
@@ -884,6 +893,10 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
         }
     }
 
+    if (_subMenu == MENU_WIFI_SCAN && _scanResults.empty() && (event.navUp() || event.navDown())) {
+        _list.setSelected(event.navUp() ? _list.itemCount() - 2 : _list.itemCount() - 1);
+        return true;
+    }
     if (event.navUp()) {
         _list.scrollUp();
         return true;
@@ -919,6 +932,7 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
 
         // WiFi scan results handling
         if (_subMenu == MENU_WIFI_SCAN) {
+            if (event.repeat) return true;
             int lastItem = _list.itemCount() - 1;
             int rescanItem = lastItem - 1;
 
