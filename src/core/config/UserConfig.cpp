@@ -1,4 +1,5 @@
 #include "UserConfig.h"
+#include "ConfigJsonWriter.h"
 #include "config/AnnounceInterval.h"
 #include "config/BoardConfig.h"
 #include "radio/RadioFrequency.h"
@@ -123,16 +124,22 @@ bool UserConfig::tryAssign(const UserConfig& source) {
     // Every valid stored record fits this aggregate source-byte allowance.
     // Check counts/bytes before copying a mutable UI candidate's allocations.
     size_t charge = 0;
-    if (!configCopyFits(source._settings, charge) || !handheld::config::Memory::admits(charge)) return false;
+    if (!configCopyFits(source._settings, charge)) return false;
+    const auto memoryFailure = [charge]() {
+        Serial.printf("[CONFIG] Copy memory unavailable: free=%u largest=%u charge=%u\n",
+            unsigned(ESP.getFreeHeap()), unsigned(ESP.getMaxAllocHeap()), unsigned(charge));
+        return false;
+    };
+    if (!handheld::config::Memory::admits(charge)) return memoryFailure();
     try {
         // Compiler-generated scalar/member copying stays the single value map.
         // Verify the SDK's nonthrowing String failures before swapping values.
         UserSettings prepared = source._settings;
-        if (!sameConfigStrings(prepared, source._settings) || !handheld::config::Memory::admits(0)) return false;
+        if (!sameConfigStrings(prepared, source._settings) || !handheld::config::Memory::admits(0)) return memoryFailure();
         std::swap(_settings, prepared);
         copyStateFrom(source);
         return true;
-    } catch (const std::bad_alloc&) { return false; }
+    } catch (const std::bad_alloc&) { return memoryFailure(); }
 }
 
 void UserConfig::copyStateFrom(const UserConfig& source) noexcept {
@@ -407,109 +414,122 @@ String UserConfig::serializeToJson(bool persisted, size_t limit, bool* unavailab
     if (unavailable) *unavailable = false;
     const auto memoryFailure = [unavailable]() {
         if (unavailable) *unavailable = true;
+        Serial.printf("[CONFIG] Encode memory unavailable: free=%u largest=%u\n",
+            unsigned(ESP.getFreeHeap()), unsigned(ESP.getMaxAllocHeap()));
         return String();
     };
     sanitizeSettings(_settings);
-    handheld::config::JsonAllocator allocator(JsonAllocationLimit);
-    JsonDocument doc(&allocator);
+    if (!_settings.propagation.valid() || _settings.voice.volume > 100 ||
+        uint8_t(_settings.voice.route) > 2 || _settings.voice.maxMessages < 1 ||
+        _settings.voice.maxMessages > 50) return "";
+    const auto write = [&](handheld::config::JsonWriter& writer) {
+        writer.object();
+        writer.member("radio_region", _settings.radioRegion);
+        writer.member("lora_freq", _settings.loraFrequency);
+        writer.member("lora_sf", _settings.loraSF);
+        writer.member("lora_bw", _settings.loraBW);
+        writer.member("lora_cr", _settings.loraCR);
+        writer.member("lora_txp", _settings.loraTxPower);
+        writer.member("lora_pre", _settings.loraPreamble);
+        writer.member("lora_on", _settings.loraEnabled);
 
-    doc["radio_region"] = _settings.radioRegion;
-    doc["lora_freq"] = _settings.loraFrequency;
-    doc["lora_sf"]   = _settings.loraSF;
-    doc["lora_bw"]   = _settings.loraBW;
-    doc["lora_cr"]   = _settings.loraCR;
-    doc["lora_txp"]  = _settings.loraTxPower;
-    doc["lora_pre"]  = _settings.loraPreamble;
-    doc["lora_on"]   = _settings.loraEnabled;
-
-    doc["wifi_mode"] = (int)_settings.wifiMode;
-    doc["wifi_restore_mode"] = (int)_settings.wifiRestoreMode;
-    doc["wifi_ap_ssid"] = _settings.wifiAPSSID;
-    doc["wifi_ap_pass"] = _settings.wifiAPPassword;
-    doc["wifi_sta_selected"] = (int)constrain((int)_settings.wifiSTASelected, 0, (int)WIFI_STA_MAX_NETWORKS - 1);
-    JsonArray staArr = doc["wifi_sta_networks"].to<JsonArray>();
-    for (size_t slot = 0; slot < WIFI_STA_MAX_NETWORKS; slot++) {
-        JsonObject obj = staArr.add<JsonObject>();
-        if (slot < _settings.wifiSTANetworks.size()) {
-            obj["ssid"] = _settings.wifiSTANetworks[slot].ssid;
-            obj["pass"] = _settings.wifiSTANetworks[slot].password;
-        } else {
-            obj["ssid"] = "";
-            obj["pass"] = "";
+        writer.member("wifi_mode", (int)_settings.wifiMode);
+        writer.member("wifi_restore_mode", (int)_settings.wifiRestoreMode);
+        writer.member("wifi_ap_ssid", _settings.wifiAPSSID);
+        writer.member("wifi_ap_pass", _settings.wifiAPPassword);
+        writer.member("wifi_sta_selected", (int)constrain((int)_settings.wifiSTASelected, 0, (int)WIFI_STA_MAX_NETWORKS - 1));
+        writer.array("wifi_sta_networks");
+        for (size_t slot = 0; slot < WIFI_STA_MAX_NETWORKS; slot++) {
+            writer.object();
+            if (slot < _settings.wifiSTANetworks.size()) {
+                writer.member("ssid", _settings.wifiSTANetworks[slot].ssid);
+                writer.member("pass", _settings.wifiSTANetworks[slot].password);
+            } else {
+                writer.member("ssid", "");
+                writer.member("pass", "");
+            }
+            writer.endObject();
         }
-    }
 
-    doc["autoiface_en"]    = _settings.autoIfaceEnabled;
-    doc["autoiface_group"] = _settings.autoIfaceGroupId;
-    doc["autoiface_max"]   = _settings.autoIfaceMaxPeers;
+        writer.endArray();
 
-    JsonArray tcpArr = doc["tcp_connections"].to<JsonArray>();
-    for (auto& ep : _settings.tcpConnections) {
-        JsonObject obj = tcpArr.add<JsonObject>();
-        obj["host"] = ep.host;
-        obj["port"] = ep.port;
-        obj["auto"] = ep.autoConnect;
-    }
+        writer.member("autoiface_en", _settings.autoIfaceEnabled);
+        writer.member("autoiface_group", _settings.autoIfaceGroupId);
+        writer.member("autoiface_max", _settings.autoIfaceMaxPeers);
 
-    doc["screen_dim"] = _settings.screenDimTimeout;
-    doc["screen_off"] = _settings.screenOffTimeout;
-    doc["brightness"] = _settings.brightness;
-    doc["dense_font"] = _settings.denseFontMode;
-    doc["theme_light"] = _settings.themeLight;
-    doc["kb_brightness"] = _settings.keyboardBrightness;
-    doc["kb_auto_on"] = _settings.keyboardAutoOn;
-    doc["kb_auto_off"] = _settings.keyboardAutoOff;
-    doc["trackball_speed"] = _settings.trackballSpeed;
-    doc["touch_sens"] = _settings.touchSensitivity;
-    doc["ble_enabled"] = false;
+        writer.array("tcp_connections");
+        for (auto& ep : _settings.tcpConnections) {
+            writer.object();
+            writer.member("host", ep.host);
+            writer.member("port", ep.port);
+            writer.member("auto", ep.autoConnect);
+            writer.endObject();
+        }
 
-    // battery settings
-    doc["batt_display"] = _settings.batteryDisplay;
-    doc["batt_model"]   = _settings.batteryModel;
-    doc["charge_thresh_v"] = _settings.chargeThresholdV;
-    doc["full_battery_v"]  = _settings.fullBatteryV;
+        writer.endArray();
 
-    doc["gps_time"]     = _settings.gpsTimeEnabled;
-    doc["gps_location"] = _settings.gpsLocationEnabled;
-    doc["tz_idx"]       = _settings.timezoneIdx;
-    doc["tz_set"]       = _settings.timezoneSet;
-    doc["time_24h"]     = _settings.use24HourTime;
+        writer.member("screen_dim", _settings.screenDimTimeout);
+        writer.member("screen_off", _settings.screenOffTimeout);
+        writer.member("brightness", _settings.brightness);
+        writer.member("dense_font", _settings.denseFontMode);
+        writer.member("theme_light", _settings.themeLight);
+        writer.member("kb_brightness", _settings.keyboardBrightness);
+        writer.member("kb_auto_on", _settings.keyboardAutoOn);
+        writer.member("kb_auto_off", _settings.keyboardAutoOff);
+        writer.member("trackball_speed", _settings.trackballSpeed);
+        writer.member("touch_sens", _settings.touchSensitivity);
+        writer.member("ble_enabled", false);
 
-    doc["audio_on"]  = _settings.audioEnabled;
-    doc["audio_vol"] = _settings.audioVolume;
+        // battery settings
+        writer.member("batt_display", _settings.batteryDisplay);
+        writer.member("batt_model", _settings.batteryModel);
+        writer.member("charge_thresh_v", _settings.chargeThresholdV);
+        writer.member("full_battery_v", _settings.fullBatteryV);
 
-    doc["display_name"] = _settings.displayName;
-    doc["name_complete"] = _settings.nameComplete;
-    if (persisted && _nameBound) {
-        static constexpr char digits[] = "0123456789abcdef";
-        char hex[33]{};
-        for (size_t i = 0; i < 16; ++i) { hex[2*i] = digits[_nameIdentity[i] >> 4]; hex[2*i+1] = digits[_nameIdentity[i] & 15]; }
-        doc["name_identity"] = hex;
-        doc["name_pending"] = _namePending;
-    }
-    doc["sd_storage"] = _settings.sdStorageEnabled;
-    doc["announce_int"] = _settings.announceInterval;
-    doc["dev_mode"]     = _settings.devMode;
-    if (!_settings.propagation.valid()) return "";
-    if(_settings.voice.volume>100 || uint8_t(_settings.voice.route)>2 || _settings.voice.maxMessages<1 || _settings.voice.maxMessages>50) return "";
-    doc["voice_on"]=_settings.voice.enabled;
-    doc["voice_contacts"]=_settings.voice.contactsOnly;
-    doc["voice_volume"]=_settings.voice.volume;
-    doc["voice_max_messages"]=_settings.voice.maxMessages;
-    doc["voice_route"]=uint8_t(_settings.voice.route);
-    doc["prop_on"] = _settings.propagation.enabled;
-    doc["prop_select"] = static_cast<uint8_t>(_settings.propagation.selection);
-    doc["prop_delivery"] = static_cast<uint8_t>(_settings.propagation.delivery);
-    char propagationNode[33]{};
-    _settings.propagation.manualHex(propagationNode);
-    doc["prop_node"] = propagationNode;
+        writer.member("gps_time", _settings.gpsTimeEnabled);
+        writer.member("gps_location", _settings.gpsLocationEnabled);
+        writer.member("tz_idx", _settings.timezoneIdx);
+        writer.member("tz_set", _settings.timezoneSet);
+        writer.member("time_24h", _settings.use24HourTime);
 
+        writer.member("audio_on", _settings.audioEnabled);
+        writer.member("audio_vol", _settings.audioVolume);
+
+        writer.member("display_name", _settings.displayName);
+        writer.member("name_complete", _settings.nameComplete);
+        if (persisted && _nameBound) {
+            static constexpr char digits[] = "0123456789abcdef";
+            char hex[33]{};
+            for (size_t i = 0; i < 16; ++i) { hex[2*i] = digits[_nameIdentity[i] >> 4]; hex[2*i+1] = digits[_nameIdentity[i] & 15]; }
+            writer.member("name_identity", hex);
+            writer.member("name_pending", _namePending);
+        }
+        writer.member("sd_storage", _settings.sdStorageEnabled);
+        writer.member("announce_int", _settings.announceInterval);
+        writer.member("dev_mode", _settings.devMode);
+        writer.member("voice_on", _settings.voice.enabled);
+        writer.member("voice_contacts", _settings.voice.contactsOnly);
+        writer.member("voice_volume", _settings.voice.volume);
+        writer.member("voice_max_messages", _settings.voice.maxMessages);
+        writer.member("voice_route", uint8_t(_settings.voice.route));
+        writer.member("prop_on", _settings.propagation.enabled);
+        writer.member("prop_select", static_cast<uint8_t>(_settings.propagation.selection));
+        writer.member("prop_delivery", static_cast<uint8_t>(_settings.propagation.delivery));
+        char propagationNode[33]{};
+        _settings.propagation.manualHex(propagationNode);
+        writer.member("prop_node", propagationNode);
+        writer.endObject();
+    };
+    handheld::config::JsonWriter measured(limit);
+    write(measured);
+    if (measured.unavailable()) return memoryFailure();
+    if (!measured.ok() || !measured.size()) return "";
     String json;
-    if (doc.overflowed()) return memoryFailure();
-    const size_t length = measureJson(doc);
-    if (!length || length > limit) return "";
-    if (!handheld::config::Memory::reserveString(json, length)) return memoryFailure();
-    if (serializeJson(doc, json) != length) return memoryFailure();
+    if (!handheld::config::Memory::reserveString(json, measured.size())) return memoryFailure();
+    handheld::config::JsonWriter output(measured.size(), &json);
+    write(output);
+    if (output.unavailable()) return memoryFailure();
+    if (!output.ok() || output.size() != measured.size() || json.length() != measured.size()) return "";
     return json;
 }
 

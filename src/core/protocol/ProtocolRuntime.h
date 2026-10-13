@@ -11,7 +11,7 @@
 #include "protocol/RustLinkManager.h"
 #include "protocol/RustResourceEngine.h"
 #include "protocol/PropagationNodes.h"
-#include "protocol/RustRrcEngine.h"
+#include "protocol/RrcRuntimeEngine.h"
 #include "protocol/RustVoiceEngine.h"
 #include "voice/VoiceWorker.h"
 #include "voice/MemoController.h"
@@ -239,7 +239,7 @@ private:
     RustLinkManager _links;
     RustResourceEngine _resources;
     RustLxmfEngine _lxmf;
-    RustRrcEngine _rrc;
+    handheld::rrc::RuntimeEngine _rrc;
     RustVoiceEngine _voice;
     handheld::voice::VoiceWorker _voiceAudio;
     handheld::memo::Controller _memos;

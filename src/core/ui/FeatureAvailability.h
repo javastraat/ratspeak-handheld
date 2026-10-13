@@ -1,7 +1,8 @@
 #pragma once
 
 // RRC remains implemented while its handheld release qualification is pending.
-// Enable explicitly for RRC testing; normal builds expose Direct chats only.
+// Enable explicitly for RRC testing; normal builds expose Direct chats only
+// and do not reserve or start the RRC session backend.
 #ifndef HANDHELD_RRC_UI_ENABLED
 #define HANDHELD_RRC_UI_ENABLED 0
 #endif
