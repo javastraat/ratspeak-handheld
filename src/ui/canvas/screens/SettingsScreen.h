@@ -48,6 +48,8 @@ public:
     void setIdentityHash(const String& hash) { _identityHash = hash; }
     using SaveCallback = std::function<SettingsTransaction::Result(UserConfig&)>;
     void setSaveCallback(SaveCallback cb) { _saveCb = cb; }
+    using ScalarSaveCallback = std::function<SettingsTransaction::Result(const UserScalars&)>;
+    void setScalarSaveCallback(ScalarSaveCallback cb) { _scalarSaveCb = cb; }
     // Called once after an initially pending transaction settles on the board.
     void applyCommitted(bool refreshCandidate = true);
     // Outcome text is static owner storage; callbacks must not navigate the UI.
@@ -131,6 +133,8 @@ private:
     void commitEdit(const std::string& value);
     std::string getCurrentValue(SubMenu menu, int field);
     bool applyAndSave();
+    bool applyScalars(const UserScalars& scalars);
+    bool finishSave(const SettingsTransaction::Result& saved);
     const UserSettings& settingsView() const;
     bool ensureCandidate();
     void releaseCandidate();
@@ -142,8 +146,8 @@ private:
     void showToast(const char* msg, unsigned long durationMs = 1500);
 
     UserConfig* _config = nullptr;
-    // A full checked copy exists only while attempting a mutation. Opening or
-    // browsing Settings never competes with the protocol for another snapshot.
+    // A full checked copy exists only while attempting a string or list edit.
+    // Browsing and scalar edits never compete with the protocol for a snapshot.
     std::optional<UserConfig> _candidate;
     FlashStore* _flash = nullptr;
     SDStore* _sdStore = nullptr;
@@ -168,6 +172,7 @@ private:
     std::string _editLabel;
     BackCallback _backCb;
     SaveCallback _saveCb;
+    ScalarSaveCallback _scalarSaveCb;
     std::function<bool(handheld::Operation)> _maintenanceCb;
     const char* _maintenanceReason = "Maintenance unavailable";
 

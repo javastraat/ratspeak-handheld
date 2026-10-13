@@ -586,12 +586,13 @@ void DeviceService::execute(uint8_t slot) {
     case Operation::ApplySettings: {
         if (_settingsSlot != ServiceMailbox::NoSlot || _config.settingsPending()) { complete(slot, Outcome::NotReady, "Settings recovery pending"); break; }
         if (request.revision != _status.configRevision) { complete(slot, Outcome::Stale, "Settings changed; try again"); break; }
+        // Decoding replaces every value; the transaction rebinds name metadata.
         UserConfig candidate;
-        if (!candidate.tryAssign(_config)) { complete(slot, Outcome::NotReady, "Settings memory unavailable; retry"); break; }
+        candidate.settings().sdStorageEnabled = _config.settings().sdStorageEnabled;
         if (!candidate.decode(_scratch, strlen(_scratch))) { complete(slot, Outcome::Invalid, "Invalid settings"); break; }
         {
-            const String encoded = candidate.encode();
-            if (encoded.isEmpty() || encoded.length() > _mailbox.capacity(slot)) {
+            const size_t encoded = candidate.snapshotLength();
+            if (!encoded || encoded > _mailbox.capacity(slot)) {
                 complete(slot, Outcome::Invalid, "Settings exceed transfer budget"); break;
             }
         }

@@ -72,10 +72,10 @@ void SettingsScreen::showPropagationNodes() {
 
 bool SettingsScreen::savePropagationAddress(const uint8_t address[16]) {
     if (!_config || !address) return false;
-    if (!ensureCandidate()) return false;
-    auto& settings = _candidate->settings().propagation;
+    UserScalars next = _config->settings();
+    auto& settings = next.propagation;
     memcpy(settings.manual, address, 16); settings.hasManual = true; settings.selection = Selection::Manual;
-    if (!applyAndSave()) return false;
+    if (!applyScalars(next)) return false;
     _subMenu = MENU_PROPAGATION; buildPropagationMenu();
     restoreRow(_focus[MENU_PROPAGATION]); return true;
 }
@@ -91,17 +91,17 @@ void SettingsScreen::activatePropagationRow(int row) {
             showToast(feedback,2500); return;
         }
         if (row != 0 && row != 1 && row != 2 && row != 5) return;
-        if (!ensureCandidate()) return;
-        auto& settings = _candidate->settings().propagation;
-        if (row == 0) { settings.enabled = !settings.enabled; applyAndSave(); }
+        UserScalars next = _config->settings();
+        auto& settings = next.propagation;
+        if (row == 0) { settings.enabled = !settings.enabled; applyScalars(next); }
         else if (row == 1) {
             settings.selection = settings.selection == Selection::Auto ? Selection::Manual : Selection::Auto;
             _propChoicePending = settings.selection == Selection::Manual;
-            applyAndSave();
+            applyScalars(next);
         } else if (row == 2) {
             settings.delivery = settings.delivery == Delivery::Auto ? Delivery::Always : Delivery::Auto;
-            applyAndSave();
-        } else if (row == 5) { settings.setManual(nullptr, 0); applyAndSave(); }
+            applyScalars(next);
+        } else if (row == 5) { settings.setManual(nullptr, 0); applyScalars(next); }
         buildPropagationMenu(); _list.setSelected(row); pollPropagationUI();
     } else if (_subMenu == MENU_PROPAGATION_CHOICE) {
         if (row == 0) {

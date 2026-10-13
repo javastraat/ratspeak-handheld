@@ -690,8 +690,8 @@ void SettingsScreen::commitEdit(const std::string& value) {
         } catch (const std::bad_alloc&) { showToast("Settings memory unavailable; retry", 2500); }
         return;
     }
-    if (!ensureCandidate()) return;
-    auto& s = _candidate->settings();
+    // Scalars stage on the stack; only string and list edits clone settings.
+    UserScalars next = _config->settings();
     const auto assign = [this, &value](String& target) {
         if (UserConfig::trySetString(target, value.data(), value.size())) return true;
         showToast("Settings memory unavailable; retry", 2500); return false;
@@ -701,8 +701,8 @@ void SettingsScreen::commitEdit(const std::string& value) {
     if (_subMenu == MENU_VOICE) {
         int32_t limit;
         if(_editField!=1 || !handheld::settings::parseInteger(value,1,50,limit)) {showToast("Enter a number from 1 to 50");return;}
-        s.voice.maxMessages=uint8_t(limit);
-        if(!applyAndSave()) return;
+        next.voice.maxMessages=uint8_t(limit);
+        if(!applyScalars(next)) return;
         buildVoiceMenu();_list.setSelected(1);
     } else if (_subMenu == MENU_PROPAGATION_CHOICE) {
         handheld::propagation::Settings parsed;
@@ -722,31 +722,31 @@ void SettingsScreen::commitEdit(const std::string& value) {
                     showToast("Unsupported frequency");
                     return;
                 }
-                s.loraFrequency = (uint32_t)v;
+                next.loraFrequency = (uint32_t)v;
                 break;
             case 1:  // SF: 5-12
                 if (v < 5 || v > 12) { showToast("SF: 5-12"); return; }
-                s.loraSF = (uint8_t)v;
+                next.loraSF = (uint8_t)v;
                 break;
             case 2:  // BW: 7800-500000
                 if (v < 7800 || v > 500000) { showToast("BW: 7800-500000 Hz"); return; }
-                s.loraBW = (uint32_t)v;
+                next.loraBW = (uint32_t)v;
                 break;
             case 3:  // CR: 5-8
                 if (v < 5 || v > 8) { showToast("CR: 5-8"); return; }
-                s.loraCR = (uint8_t)v;
+                next.loraCR = (uint8_t)v;
                 break;
             case 4:  // TX Power
                 if (v < -9 || v > LORA_MAX_TX_POWER) { showToast("TX power: -9 to 22 dBm"); return; }
-                s.loraTxPower = (int8_t)v;
+                next.loraTxPower = (int8_t)v;
                 break;
             case 5:
                 if (v < 6 || v > 65) { showToast("Preamble: 6-65 symbols"); return; }
-                s.loraPreamble = v;
+                next.loraPreamble = v;
                 break;
             default: return;
         }
-        if (!applyAndSave()) return;
+        if (!applyScalars(next)) return;
         buildRadioMenu();
     } else if (_subMenu == MENU_TCP) {
         if (_editField == 100 && !value.empty()) {
@@ -762,6 +762,8 @@ void SettingsScreen::commitEdit(const std::string& value) {
         }
         buildTCPMenu();
     } else if (_subMenu == MENU_WIFI) {
+        if (!ensureCandidate()) return;
+        auto& s = _candidate->settings();
         // Fields: 0=SSID, 1=Password (AP or STA depending on mode)
         if (s.wifiMode == RAT_WIFI_AP) {
             switch (_editField) {
@@ -793,15 +795,18 @@ void SettingsScreen::commitEdit(const std::string& value) {
                 _editField == 1 ? "Dim timeout: 5-3600s" : "Off timeout: 10-7200s");
             return;
         }
-        switch (_editField) {
-            case 0: s.brightness = (uint8_t)v; break;
-            case 1: s.screenDimTimeout = (uint16_t)v; break;
-            case 2: s.screenOffTimeout = (uint16_t)v; break;
-            case 3: if (!assign(s.displayName)) return; break;
-            case 4: s.announceInterval = uint16_t(v); break;
-            default: return;
+        if (_editField == 3) {
+            if (!ensureCandidate() || !assign(_candidate->settings().displayName) || !applyAndSave()) return;
+        } else {
+            switch (_editField) {
+                case 0: next.brightness = (uint8_t)v; break;
+                case 1: next.screenDimTimeout = (uint16_t)v; break;
+                case 2: next.screenOffTimeout = (uint16_t)v; break;
+                case 4: next.announceInterval = uint16_t(v); break;
+                default: return;
+            }
+            if (!applyScalars(next)) return;
         }
-        if (!applyAndSave()) return;
         if (_subMenu == MENU_IDENTITY) buildIdentityMenu();
         else buildDisplayMenu();
     } else if (_subMenu == MENU_AUDIO) {
@@ -810,9 +815,9 @@ void SettingsScreen::commitEdit(const std::string& value) {
             if (!handheld::settings::parseInteger(value, 0, 100, v)) {
                 showToast("Volume: 0-100%"); return;
             }
-            s.audioVolume = (uint8_t)v;
+            next.audioVolume = (uint8_t)v;
         }
-        if (!applyAndSave()) return;
+        if (!applyScalars(next)) return;
         buildAudioMenu();
     }
 
@@ -1074,10 +1079,9 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
                 startEditing(selected.value, getCurrentValue(_subMenu, selected.value)); break;
             case RowAction::Preset: applyRadioPreset(selected.value); break;
             case RowAction::WiFiMode: {
-                if (!ensureCandidate()) break;
-                auto& s = _candidate->settings();
-                s.wifiMode = RatWiFiMode((int(s.wifiMode) + 1) % 3);
-                if (applyAndSave()) showToast("Reboot to apply");
+                UserScalars next = _config->settings();
+                next.wifiMode = RatWiFiMode((int(next.wifiMode) + 1) % 3);
+                if (applyScalars(next)) showToast("Reboot to apply");
                 buildWiFiMenu(); break;
             }
             case RowAction::WiFiConnection:
@@ -1090,10 +1094,9 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
                 if (!event.repeat) selectNetwork(selected.value);
                 break;
             case RowAction::AutoDiscover: {
-                if (!ensureCandidate()) break;
-                auto& s = _candidate->settings();
-                s.autoIfaceEnabled = !s.autoIfaceEnabled;
-                if (applyAndSave()) showToast("Reboot to apply");
+                UserScalars next = _config->settings();
+                next.autoIfaceEnabled = !next.autoIfaceEnabled;
+                if (applyScalars(next)) showToast("Reboot to apply");
                 buildWiFiMenu(); restoreRow(selected); break;
             }
             case RowAction::TCPAdd:
@@ -1102,9 +1105,8 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
             case RowAction::TCPToggle:
                 toggleTCPConnection(selected.value); restoreRow(selected); break;
             case RowAction::AudioToggle: {
-                if (!ensureCandidate()) break;
-                auto& s = _candidate->settings(); s.audioEnabled = !s.audioEnabled;
-                applyAndSave(); buildAudioMenu(); break;
+                UserScalars next = _config->settings(); next.audioEnabled = !next.audioEnabled;
+                applyScalars(next); buildAudioMenu(); break;
             }
             case RowAction::SDInitialize: sdCardFormat(); break;
             case RowAction::SDWipe:
@@ -1142,6 +1144,18 @@ bool SettingsScreen::applyAndSave() {
     // The editor retains the user's text; retries re-stage it against the
     // latest committed config. No hidden/failed full snapshot is retained.
     releaseCandidate();
+    return finishSave(saved);
+}
+
+bool SettingsScreen::applyScalars(const UserScalars& scalars) {
+    if (!_active || !_config) return false;
+    if (_config->settingsPending() || _radioApplyPending) { showToast("Settings apply pending"); return false; }
+    if (!_flash || !_scalarSaveCb) { showToast("Settings unavailable"); return false; }
+    releaseCandidate(); // A staged full copy would be stale after this commit.
+    return finishSave(_scalarSaveCb(scalars));
+}
+
+bool SettingsScreen::finishSave(const SettingsTransaction::Result& saved) {
     if (!saved.complete()) {
         if (_config->settingsPending()) {
             _editing = false; _editInput.setActive(false);
@@ -1221,10 +1235,10 @@ bool SettingsScreen::pollRadioApply(bool accepting) {
 void SettingsScreen::applyRadioPreset(int preset) {
     if (_config && (_config->settingsPending() || _radioApplyPending)) { showToast("Settings apply pending"); return; }
     if (!_config || preset < 0 || preset >= RadioPresets::count) return;
-    if (!ensureCandidate()) return;
+    UserScalars next = _config->settings();
+    RadioPresets::apply(next, preset);
     _presetAnnouncePending = true;
-    RadioPresets::apply(_candidate->settings(), preset);
-    const bool saved = applyAndSave();
+    const bool saved = applyScalars(next);
     if (!saved && !_config->settingsPending() && !_radioApplyPending) _presetAnnouncePending = false;
     const Row selected = selectedRow();
     rebuildMenu(); restoreRow(selected);

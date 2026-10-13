@@ -242,13 +242,8 @@ static void finishCardSettings(CardSettingsStep step) {
     ui.markAllDirty();
 }
 
-static SettingsTransaction::Result saveCardSettings(UserConfig& candidate, CardSettingsStep step) {
-    if (!maintenance.accepting()) return {SettingsTransaction::State::Invalid, "Shutdown in progress"};
-    if (settingsScreen.radioApplyPending()) return {SettingsTransaction::State::Invalid, "Waiting for radio"};
-    const bool alreadyPending = userConfig.settingsPending();
-    const uint8_t networkChanges = alreadyPending ? handheld::network_settings::None :
-        handheld::network_settings::changes(userConfig.settings(), candidate.settings());
-    const auto result = SettingsTransaction::apply(userConfig, candidate, identityMgr, sdStore, flash);
+static SettingsTransaction::Result finishCardSave(SettingsTransaction::Result result, bool alreadyPending,
+                                                  uint8_t networkChanges, CardSettingsStep step) {
     const bool pending = result.state == SettingsTransaction::State::Pending;
     if (pending && !alreadyPending) {
         pendingSettingsStep = step; pendingNetworkChanges = networkChanges;
@@ -265,6 +260,25 @@ static SettingsTransaction::Result saveCardSettings(UserConfig& candidate, CardS
     }
     ui.markAllDirty();
     return result;
+}
+
+static SettingsTransaction::Result saveCardSettings(UserConfig& candidate, CardSettingsStep step) {
+    if (!maintenance.accepting()) return {SettingsTransaction::State::Invalid, "Shutdown in progress"};
+    if (settingsScreen.radioApplyPending()) return {SettingsTransaction::State::Invalid, "Waiting for radio"};
+    const bool alreadyPending = userConfig.settingsPending();
+    const uint8_t networkChanges = alreadyPending ? handheld::network_settings::None :
+        handheld::network_settings::changes(userConfig.settings(), candidate.settings());
+    return finishCardSave(SettingsTransaction::apply(userConfig, candidate, identityMgr, sdStore, flash),
+                          alreadyPending, networkChanges, step);
+}
+
+// AP credentials and TCP endpoints are strings/lists, never scalar edits.
+static SettingsTransaction::Result saveCardScalars(const UserScalars& scalars, CardSettingsStep step) {
+    if (!maintenance.accepting()) return {SettingsTransaction::State::Invalid, "Shutdown in progress"};
+    if (settingsScreen.radioApplyPending()) return {SettingsTransaction::State::Invalid, "Waiting for radio"};
+    const bool alreadyPending = userConfig.settingsPending();
+    return finishCardSave(SettingsTransaction::applyScalars(userConfig, scalars, identityMgr, sdStore, flash),
+                          alreadyPending, handheld::network_settings::None, step);
 }
 
 static void pollCardSettings() {
@@ -855,6 +869,9 @@ void setup() {
     settingsScreen.setSaveCallback([](UserConfig& candidate) {
         return saveCardSettings(candidate, CardSettingsStep::Settings);
     });
+    settingsScreen.setScalarSaveCallback([](const UserScalars& scalars) {
+        return saveCardScalars(scalars, CardSettingsStep::Settings);
+    });
 
     tabScreens[TabBar::TAB_HOME]  = &homeScreen;
     tabScreens[TabBar::TAB_MSGS]  = &messagesScreen;
@@ -878,20 +895,17 @@ void setup() {
     });
     timezoneScreen.setDoneCallback([](int tzIdx) {
         if (userConfig.settingsPending() || tzIdx < 0 || tzIdx >= TIMEZONE_COUNT) return;
-        UserConfig candidate;
-        if (!candidate.tryAssign(userConfig)) {
-            timezoneScreen.setSaveStatus("Memory unavailable; Enter retries", false); return;
-        }
-        candidate.settings().timezoneIdx = uint8_t(tzIdx);
+        UserScalars next = userConfig.settings();
+        next.timezoneIdx = uint8_t(tzIdx);
         // Region suggestion is only this explicit first-setup choice. A later
         // timezone edit/recovery preserves the established manual frequency.
-        if (!candidate.settings().timezoneSet) {
+        if (!next.timezoneSet) {
             const uint8_t region = TIMEZONE_TABLE[tzIdx].radioRegion;
-            candidate.settings().radioRegion = region;
-            candidate.settings().loraFrequency = REGION_FREQ[region];
+            next.radioRegion = region;
+            next.loraFrequency = REGION_FREQ[region];
         }
-        candidate.settings().timezoneSet = true;
-        saveCardSettings(candidate, CardSettingsStep::Timezone);
+        next.timezoneSet = true;
+        saveCardScalars(next, CardSettingsStep::Timezone);
     });
 
     Serial.printf("[BOOT] displayName='%s' tzSet=%d wifiMode=%d\n",
