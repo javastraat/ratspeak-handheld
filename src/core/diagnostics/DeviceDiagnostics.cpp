@@ -4,6 +4,7 @@
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
 #include "voice/VoiceWorker.h"
+#include "storage/LegacyMessageArena.h"
 #include <cctype>
 #include <cstring>
 #include <esp_heap_caps.h>
@@ -94,6 +95,10 @@ void DeviceDiagnostics::printDiagnostics() {
     }
     Serial.printf("Free heap: %lu bytes  PSRAM: %lu bytes\n",
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram());
+    const auto& reserve = storage::legacyMessageArena();
+    if (reserve.available())
+        Serial.printf("Storage reserve: %lu bytes legacy=%u\n",
+                      (unsigned long)reserve.capacity(), unsigned(reserve.legacyNeeded()));
     sampleMemory(static_cast<uint32_t>(millis()));
     printMemory();
     if (extraDump) extraDump();

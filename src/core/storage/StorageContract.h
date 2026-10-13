@@ -212,6 +212,9 @@ struct Budget {
     // one arena and stream the file; no complete input/output JSON copy.
     static constexpr size_t LegacyScratch = 56 * 1024;
     static constexpr size_t LegacyAllocation = LegacyScratch + AlignedStorageOverhead;
+    // Kept after a boot census finds no record beyond JsonAllocator: normal
+    // parsing plus margin for bounded mutation growth (one pool page, fields).
+    static constexpr size_t ReducedLegacyScratch = JsonAllocator + 2048;
 
     static constexpr size_t payloadCapacity(bool cardputer, uint8_t slot) {
         return slot >= NormalSlots ? 0 :
@@ -220,6 +223,9 @@ struct Budget {
     static constexpr bool validBody(size_t title, size_t content) {
         return title <= MaxMessageBody && content <= MaxMessageBody - title;
     }
+    // Card's JsonAllocator term is the normal capacity of its reserved arena
+    // (LegacyScratch, or ReducedLegacyScratch after a clean boot census), not
+    // a separate allocation; the arena remainder is the legacy reserve.
     static constexpr size_t storageWorkingSet(bool cardputer) {
         return (cardputer ? CardPayloadBytes : LargeBoardPayloadBytes) + SlotCeiling +
                JsonAllocator + IoScratch + StoreBookkeeping + WorkerStack + RtosBookkeeping +
@@ -235,6 +241,7 @@ static_assert(Budget::SlotBytes <= Budget::SlotCeiling, "Storage slots exceed th
 static_assert(Budget::storageWorkingSet(true) == 27296, "Review Cardputer storage budget changes");
 static_assert(Budget::storageWorkingSet(false) == 39104, "Review Deck/Pager storage budget changes");
 static_assert(Budget::MaxNewJson <= Budget::MaxJsonFile, "New records must fit the retained schema");
+static_assert(Budget::ReducedLegacyScratch < Budget::LegacyScratch, "Reduction must return reserve bytes");
 static_assert(std::is_trivially_copyable<Request>::value && std::is_trivially_copyable<Result>::value,
               "Storage requests/results cannot retain heap or callback ownership");
 

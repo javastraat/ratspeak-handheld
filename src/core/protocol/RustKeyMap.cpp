@@ -50,7 +50,8 @@ bool RustKeyMap::begin(FlashStore* flash, rs_handheld_rns_t* ctx, int32_t profil
     _flash = flash;
     _ctx = ctx;
     const size_t cap = profile == RS_HANDHELD_PROFILE_MICRO ? MICRO_BLOB_MAX : SMALL_BLOB_MAX;
-    static_assert(MICRO_BLOB_MAX <= handheld::storage::Budget::LegacyScratch);
+    static_assert(MICRO_BLOB_MAX <= handheld::storage::Budget::ReducedLegacyScratch &&
+                  handheld::propagation::RecipientStampCosts::BlobMax <= MICRO_BLOB_MAX);
     _sharedScratch = profile == RS_HANDHELD_PROFILE_MICRO && handheld::storage::legacyMessageArena().available();
     if (_sharedScratch) std::vector<uint8_t>().swap(_blob);
     else _blob.assign(cap, 0);

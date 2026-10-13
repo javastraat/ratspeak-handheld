@@ -235,7 +235,11 @@ public:
         // Keep exclusive ownership while rebuilding the allocator with the
         // larger legacy capacity. No live document/source may alias this reset.
         _document.reset(); _arena.reset();
-        if (!_borrowed) {
+        size_t capacity = Budget::LegacyScratch;
+        if (_borrowed) {
+            legacyMessageArena().noteLegacy(); // Boot census: keep the full reserve.
+            capacity = legacyMessageArena().capacity();
+        } else {
             freeAlignedStorage(_memory); _memory = nullptr;
             // A reserved block denied to this document is still owned by its
             // caller; never allocate around or wait on that contention.
@@ -249,14 +253,17 @@ public:
         }
         if (!_memory) { _document.emplace(&_normal); return Error::Allocation; }
         _exceptional = true;
-        _arena.emplace(_memory, Budget::LegacyScratch);
+        _arena.emplace(_memory, capacity);
         _document.emplace(&*_arena);
         if (!file.seek(0)) return Error::Read;
         reader.reset(); _timestamp = {};
         const auto retry = deserializeJson(*_document, reader, TimestampFilter{&_timestamp});
         // The exceptional arena was successfully reserved. Exhausting this
         // fixed schema envelope is a preserved recovery error, not transient
-        // heap backpressure that could retry forever.
+        // heap backpressure that could retry forever. A reduced reserve is not
+        // that envelope: restart restores the legacy capacity for the record.
+        if (retry == DeserializationError::NoMemory && capacity < Budget::LegacyScratch && !reader.failed())
+            return Error::Allocation;
         const bool ended = !retry && reader.ended();
         return reader.failed() ? Error::Read : ended ? Error::None : Error::InvalidRecord;
     }

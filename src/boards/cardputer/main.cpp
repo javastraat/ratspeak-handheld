@@ -27,6 +27,7 @@
 #include "storage/SDStore.h"
 #include "storage/MessageStore.h"
 #include "storage/LegacyMessageArena.h"
+#include "storage/StorageLease.h"
 #include "reticulum/AnnounceManager.h"
 #include "reticulum/LXMFManager.h"
 #include "reticulum/IdentityManager.h"
@@ -664,6 +665,15 @@ void setup() {
         bootScreen.setProgress(0.91f, "Storage error - data preserved");
         ui.render();
         for (;;) delay(20);
+    }
+    // Boot summaries parsed every retained record copy: return the unneeded
+    // legacy reserve whole, before the protocol node and networking allocate.
+    {
+        handheld::storage::StorageLease lease;
+        auto& arena = handheld::storage::legacyMessageArena();
+        const bool reduced = lease.held() && arena.reduce();
+        Serial.printf("[STORAGE] Legacy reserve %s: %u bytes\n", reduced ? "reduced" : "retained",
+                      unsigned(arena.capacity()));
     }
     // Protocol runtime lifecycle: init -> identity -> boot-seed ->
     // placement open_transport (MICRO node in internal heap) -> pump. LXMF
