@@ -814,13 +814,16 @@ void LvSettingsScreen::buildItems() {
         _items.back().id = SettingId::Theme;
         idx++;
     }
+    // Off may not precede dim: the edited value stands and its pair follows.
     _items.push_back({"Dim After", SettingType::INTEGER,
-        [&s]() { return s.screenDimTimeout; }, [&s](int v) { s.screenDimTimeout = v; },
+        [&s]() { return s.screenDimTimeout; },
+        [&s](int v) { s.screenDimTimeout = v; if (s.screenOffTimeout < v) s.screenOffTimeout = v; },
         [](int v) { return String(v) + "s"; }, 5, 3600, 5});
     _items.back().id = SettingId::DimAfter;
     idx++;
     _items.push_back({"Display Off After", SettingType::INTEGER,
-        [&s]() { return s.screenOffTimeout; }, [&s](int v) { s.screenOffTimeout = v; },
+        [&s]() { return s.screenOffTimeout; },
+        [&s](int v) { s.screenOffTimeout = v; if (s.screenDimTimeout > v) s.screenDimTimeout = v; },
         [](int v) { return String(v) + "s"; }, 10, 7200, 10});
     _items.back().id = SettingId::DisplayOffAfter;
     idx++;
