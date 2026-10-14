@@ -786,11 +786,11 @@ void setup() {
     }
 #endif
 
-    // Initialize power manager + audio
-    power.begin();
+    // Initialize power manager + audio; begin() lights the saved brightness.
     power.setDimTimeout(userConfig.settings().screenDimTimeout);
     power.setOffTimeout(userConfig.settings().screenOffTimeout);
     power.setBrightness(userConfig.settings().brightness);
+    power.begin();
 
     audio.setEnabled(userConfig.settings().audioEnabled);
     audio.setVolume(userConfig.settings().audioVolume);
