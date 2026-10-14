@@ -1,6 +1,6 @@
-built: 2026-10-13T22:36:23Z
+built: 2026-10-14T00:21:00Z
 toolchain: rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)
-ratspeak-handheld.source-sha256: 4d9b7e12c700609c05dd5af8a5dc179020d87d374cb100ce071f193527e2ca4d
+ratspeak-handheld.source-sha256: 66d2b50db4df51ad01abe9e69d3bfc0c452171f77ebcbe86c020a8c107cfa5b0
 source-graph-sha256: 5bfa0eff3512bc4b0598e0a6e3ef23611b8fe6021841f6345348f9fe78950613
 rsReticulumLite: 22bcbbe4a9f5535a4c81618f691696451472f126
 rsLXMFLite: 5a35797c720f7483f3b19a26f3fb6d9710af2fa3
