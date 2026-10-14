@@ -1,19 +1,7 @@
-## v2.3.1
+## v2.3.2
 
 ### Fixed and improved
 
-- Reorganized Settings into clearer groups on every device.
-- Applied TCP hub, LAN discovery, and Cardputer Adv brightness changes as soon as they're saved, and limited restart prompts to changes that need one.
-- Fixed "Settings memory unavailable" errors on Cardputer Adv during busy network activity.
-- Improved Cardputer Adv setting inputs, including a number editor for Playback volume and a chooser for Wi-Fi mode.
-- Improved Wi-Fi scanning so it recovers after failed connection attempts.
-- Fixed screen dimming and keyboard backlight not following saved settings.
-- Applied theme and 24-hour clock changes throughout the interface.
-- Fixed the Cardputer Adv startup sound sometimes cutting off, and T-Pager alerts playing quieter than the selected volume.
-- Kept the saved Wi-Fi setting when a device recovers from repeated failed startups.
-- Hardened message links against malformed and spoofed packets.
-
-### Build and compatibility
-
-- Settings are now saved only to internal storage, with or without an SD card.
-- Compatible web flasher updates keep identity, messages, and settings. Factory ZIP installations erase them, so back up anything you want to keep.
+- Fixed devices upgraded from rsCardputer with an SD card stopping at "Storage error - data preserved".
+- If messages on the SD card can't be loaded, device defaults to internal storage.
+- Messages still queued in rsCardputer are not sent again after upgrading.
