@@ -1,4 +1,5 @@
 #include "LvMessageView.h"
+#include "ClockText.h"
 #include "ui/FeatureAvailability.h"
 #include "ui/MessageAudio.h"
 #include "storage/Hex.h"
@@ -35,13 +36,13 @@ uint32_t bubbleBorderColor(LXMFStatus status) {
     return Theme::BORDER;
 }
 
-bool formatClock(double ts, char* out, size_t outLen) {
+bool formatClock(double ts, bool use24h, char* out, size_t outLen) {
     if (!out || outLen == 0 || ts <= 1700000000) return false;
     time_t t = (time_t)ts;
     struct tm converted;
     struct tm* tm = localtime_r(&t, &converted);
     if (!tm) return false;
-    snprintf(out, outLen, "%02d:%02d", tm->tm_hour, tm->tm_min);
+    formatClockText(out, outLen, *tm, use24h);
     return true;
 }
 
@@ -1053,7 +1054,7 @@ void LvMessageView::appendMessage(size_t index, const Span& span, const char* te
     }
 
     char timeBuf[8] = {0};
-    bool hasTime = formatClock(span.timestamp, timeBuf, sizeof(timeBuf));
+    bool hasTime = formatClock(span.timestamp, _use24h, timeBuf, sizeof(timeBuf));
     bool needsMeta = hasTime || (!span.incoming() && !span.unavailable());
     lv_obj_t* statusLbl = nullptr;
     if (needsMeta) {

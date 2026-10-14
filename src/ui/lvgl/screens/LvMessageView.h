@@ -15,6 +15,7 @@
 class LvMessageView : public LvScreen {
 public:
     void setService(handheld::ServiceClient* service) { _service = service; }
+    void setUse24Hour(bool value) { _use24h = value; }
     using BackCallback = std::function<void()>;
 
     void createUI(lv_obj_t* parent) override;
@@ -41,6 +42,7 @@ private:
     RrcTools _rrcTools;
     handheld::ui::MessageMenu _messageTools;
     bool _messageActionPending=false,_selectAfterPage=false,_dismissedDelete=false;
+    bool _use24h=true;
     uint32_t _audioPressPublication=0,_audioPressOwner=0,_messagePressPublication=0;
     size_t _messagePressIndex=handheld::history::HistoryWindow::VisibleSpans;
     size_t _audioPressIndex=handheld::history::HistoryWindow::VisibleSpans;

@@ -2,6 +2,7 @@
 #include "ui/FeatureAvailability.h"
 #include "Theme.h"
 #include "LvTheme.h"
+#include "ClockText.h"
 #include "LvInput.h"
 #include "PageNavigation.h"
 #include "LxmFaceAvatar.h"
@@ -285,7 +286,7 @@ void LvMessagesScreen::bindRows() {
         if (value.timestamp>1700000000 && value.timestamp<static_cast<double>(std::numeric_limits<time_t>::max())) {
             const time_t stamp=static_cast<time_t>(value.timestamp);struct tm result;
             if (localtime_r(&stamp,&result)) {
-                char clock[8];snprintf(clock,sizeof(clock),"%02d:%02d",result.tm_hour,result.tm_min);
+                char clock[8];formatClockText(clock,sizeof(clock),result,_use24h);
                 auto* time=label(row,&lv_font_rsdeck_10,Theme::TEXT_MUTED,Theme::CONTENT_W-47,6,43);
                 lv_label_set_text(time,clock);
             }

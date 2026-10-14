@@ -43,6 +43,7 @@ void addHelpRow(lv_obj_t* parent, const char* keys, const char* action) {
 
 void LvHelpOverlay::create() {
     if (_overlay) return;
+    _scheme = Theme::scheme();
 
     _overlay = lv_obj_create(lv_layer_top());
     lv_obj_set_size(_overlay, 304, 190);
@@ -111,6 +112,7 @@ void LvHelpOverlay::create() {
 }
 
 void LvHelpOverlay::show() {
+    if (_overlay && _scheme != Theme::scheme()) { lv_obj_del(_overlay); _overlay = nullptr; }
     if (!_overlay) create();
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
     _visible = true;

@@ -10,6 +10,7 @@ class LvMessagesScreen : public LvScreen {
 public:
     using OpenCallback = std::function<void(const std::string&)>;
     void setService(handheld::ServiceClient* service) { _service = service; }
+    void setUse24Hour(bool value) { _use24h = value; }
     void setAnnounceManager(handheld::NodeView* nodes) { _am = nodes; }
     void setBackend(handheld::ProtocolView* backend) { _backend = backend; }
     void setOpenCallback(OpenCallback callback) { _onOpen = callback; }
@@ -81,6 +82,7 @@ private:
     uint8_t _rowCount = 0, _menuIdx = 0;
     LongPressState _lpState = LP_NONE;
     bool _active = false, _binding = false, _focusActive = false;
+    bool _use24h = true;
     bool _nameFailed = false;
     bool _loadPending = false;
 };
