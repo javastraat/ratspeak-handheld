@@ -77,7 +77,7 @@ private:
     Error inspect(const RecordKey&, unsigned medium, const char* suffix, MessageDocument&, StoredRecordHeader&,
                   bool* parsed = nullptr);
     Error commit(const RecordKey&, MessageDocument&, bool creating, Result&, const uint8_t* audio = nullptr,
-                 uint8_t referenceOnlyMedium = UINT8_MAX, bool requireFlash = false);
+                 uint8_t referenceOnlyMedium = UINT8_MAX, bool requireFlash = false, bool existingOnly = false);
     File openAudio(const RecordKey&, unsigned medium, const StoredRecordHeader&,
                    uint8_t* output = nullptr, size_t offset = 0, size_t length = 0);
     Error ensureAudio(const RecordKey&, unsigned medium, const StoredRecordHeader&, const uint8_t* bytes);

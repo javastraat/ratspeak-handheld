@@ -31,9 +31,10 @@ public:
     using HistoryEntry = handheld::storage::HistoryEntry;
     using HistoryDirection = handheld::storage::HistoryDirection;
     static constexpr size_t ConversationPageCapacity = STORAGE_ASYNC_WRITES ? 16 : 64;
-    bool begin(FlashStore* flash, SDStore* sd = nullptr, bool externalStorageEnabled = false);
+    bool begin(FlashStore* flash, SDStore* sd = nullptr, bool externalStorageEnabled = false, bool migrate = true);
     // Startup entry: a card that cannot be served falls back to internal storage
     // for this boot, leaving the card's messages in place for the next boot.
+    // Legacy import and voice retention wait for a boot that can read the card.
     enum class BootResult : uint8_t { Ready, InternalOnly, Failed };
     BootResult beginForBoot(FlashStore* flash, SDStore* sd, bool externalStorageEnabled);
     bool setExternalStorageEnabled(bool enabled);
@@ -140,7 +141,7 @@ private:
     Ticket _audioRetentionTicket;
     uint32_t _audioRetentionRetry=0;
     uint8_t _maxVoiceMessages=2;
-    bool _audioRetentionConfigured=false,_audioRetentionDirty=true,_audioExternalReady=false;
+    bool _audioRetentionConfigured=false,_audioRetentionDirty=true,_audioExternalReady=false,_cardPending=false;
     Ticket _deleteFence;
     uint8_t _fencedPeer[16] = {};
     uint64_t _settledThrough = 0;

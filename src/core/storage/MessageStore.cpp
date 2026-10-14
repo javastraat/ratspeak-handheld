@@ -9,7 +9,7 @@
 
 using namespace handheld::storage;
 
-bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEnabled) {
+bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEnabled, bool migrate) {
     handheld::assertDeviceOwner();
     if (_writeQueue.accepting() || !_writeQueue.stopped() || _writeQueue.drainCount()) return false;
     _flash = flash; _sd = sd; _externalStorageEnabled = externalStorageEnabled;
@@ -23,20 +23,24 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
         _sd->ensureDir(SD_PATH_ROOT); _sd->ensureDir(SD_PATH_MESSAGES);
     }
     try {
-        MessageMigration migration(_flash, _sd, _externalStorageEnabled);
-        if (!migration.run()) {
-            Serial.println("[MSGSTORE] Initialization deferred: legacy storage needs recovery");
-            return false;
-        }
+        if (migrate) {
+            MessageMigration migration(_flash, _sd, _externalStorageEnabled);
+            const bool migrated = migration.run();
+            migration.persistFloor();
+            if (!migrated) {
+                Serial.println("[MSGSTORE] Initialization deferred: legacy storage needs recovery");
+                return false;
+            }
 #if LEGACY_READ_CTR_MIGRATION
-        // Boot owns the executor until migration has settled. Deferred worker
-        // registration begins only at the ordinary initialization below.
-        if (!transactions().begin(_flash, _sd, _externalStorageEnabled, false) ||
-            !migration.foldReadMarkers(transactions())) {
-            Serial.println("[MSGSTORE] Initialization deferred: legacy read state needs recovery");
-            return false;
-        }
+            // Boot owns the executor until migration has settled. Deferred worker
+            // registration begins only at the ordinary initialization below.
+            if (!transactions().begin(_flash, _sd, _externalStorageEnabled, false)) {
+                Serial.println("[MSGSTORE] Initialization deferred: legacy read state needs recovery");
+                return false;
+            }
+            migration.foldReadMarkers(transactions());
 #endif
+        }
     } catch (const std::bad_alloc&) {
         Serial.println("[MSGSTORE] Initialization deferred: migration memory unavailable");
         return false;
@@ -66,8 +70,11 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
 }
 
 MessageStore::BootResult MessageStore::beginForBoot(FlashStore* flash, SDStore* sd, bool externalStorageEnabled) {
+    _cardPending = false;
     if (begin(flash, sd, externalStorageEnabled)) return BootResult::Ready;
-    if (!externalStorageEnabled || !sd || !sd->isReady() || !begin(flash, sd, false)) return BootResult::Failed;
+    // Without the card, a legacy item's conflict with its card copy is unprovable.
+    if (!externalStorageEnabled || !sd || !sd->isReady() || !begin(flash, sd, false, false)) return BootResult::Failed;
+    _cardPending = true;
     Serial.println("[MSGSTORE] SD messages not loaded; using internal storage for this boot");
     return BootResult::InternalOnly;
 }

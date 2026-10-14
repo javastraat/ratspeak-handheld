@@ -347,6 +347,9 @@ bool MessageTransactions::initializeCounter() {
     while (nextPeer(previous, peerHex, scanError)) {
         memcpy(previous, peerHex, 33); uint8_t peer[16]; decodeHex(peerHex, 32, peer, 16);
         Cursor cursor; beginRecords(cursor, peer);cursor.includeDeleted=true; RecordKey key;
+        // An unreadable deletion marker blocks only its own peer (create/erase
+        // refuse it); its record names still bound the shared counter.
+        if (cursor.error == Error::InvalidRecord) { cursor.error = Error::None; cursor.cutoff = 0; }
         if (cursor.cutoff == UINT32_MAX) { _nextCounter = UINT32_MAX; return true; }
         _nextCounter = std::max(_nextCounter, cursor.cutoff + 1);
         while (nextRecord(cursor, key)) {
@@ -415,7 +418,8 @@ bool MessageTransactions::removeAudio(const RecordKey& key, unsigned which) {
 }
 
 Error MessageTransactions::commit(const RecordKey& key, MessageDocument& document, bool creating, Result& result,
-                                  const uint8_t* media, uint8_t referenceOnlyMedium, bool requireFlash) {
+                                  const uint8_t* media, uint8_t referenceOnlyMedium, bool requireFlash,
+                                  bool existingOnly) {
     JsonSource source(document);
     if (source.error() != Error::None) return source.error();
     if (document.document().overflowed() || source.length() > (creating ? Budget::MaxNewJson : Budget::MaxStoredFile))
@@ -432,6 +436,9 @@ Error MessageTransactions::commit(const RecordKey& key, MessageDocument& documen
         try {
             char parent[96], filePath[128]; directory(key.peer, which, parent); path(key, which, filePath);
             char backup[128]; path(key, which, backup, ".bak");
+            if (existingOnly && !creating && !store.exists(filePath) && !store.exists(backup)) {
+                outcome.attempted = false; continue;
+            }
             if (!creating && retainedCopy(key, which, document)) outcome.error = Error::None;
             else if (!creating && (_blockedMedia & (1u << which))) outcome.error = Error::InvalidRecord;
             else if (creating && (store.exists(filePath) || store.exists(backup))) outcome.error = Error::Stale;
@@ -584,12 +591,13 @@ void MessageTransactions::markRead(const Request& request, Result& result) {
         if (!key.incoming || (request.key.counter && key.counter > request.key.counter)) continue;
         uint8_t selectedMedium;
         const auto error = load(key, document, header, &selectedMedium);
+        if (error == Error::InvalidRecord) continue; // An unreadable record has no read state to change.
         if (error != Error::None) { failure = error; continue; }
         if (header.read) continue;
         if (header.revision == UINT32_MAX) { failure = Error::RevisionExhausted; continue; }
         document.document()["read"] = true; document.document()["store_revision"] = header.revision + 1;
         Result changed;
-        const auto saved = commit(key, document, false, changed, nullptr, selectedMedium);
+        const auto saved = commit(key, document, false, changed, nullptr, selectedMedium, false, request.existingOnly);
         if (saved != Error::None) { failure = saved; continue; }
         ++result.total; result.outcome = Outcome::Committed;
         if (result.unreadDelta > INT32_MIN) --result.unreadDelta;
@@ -969,7 +977,8 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
             StoredRecordHeader header; const auto error = load(key, document, header);
             if (error == Error::InvalidRecord) continue; // No readable copy can be resent.
             if (error != Error::None) { result.error = error; return; }
-            if (!messaging::pendingStatus(header.status)) continue;
+            // Revision 0 is imported history; legacy firmware never resent it after a restart.
+            if (!header.revision || !messaging::pendingStatus(header.status)) continue;
             if (found) result.more = true;
             if (found && !less(key, result.key)) continue;
             found = true; selected = header; result.key = key;

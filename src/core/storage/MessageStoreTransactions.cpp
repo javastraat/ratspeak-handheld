@@ -308,7 +308,8 @@ void MessageStore::pollVoiceRetention(bool allowIo) {
         _audioRetentionRetry=now+(result.error!=Error::None?1000:0);
         releaseResult(_audioRetentionTicket);_audioRetentionTicket={};
     }
-    if((!_writeQueue.deferred() && !allowIo) || !_audioRetentionConfigured || !_audioRetentionDirty ||
+    // An unloaded card may still hold audio that a flash-only pass would mark removed.
+    if((!_writeQueue.deferred() && !allowIo) || _cardPending || !_audioRetentionConfigured || !_audioRetentionDirty ||
        !_writeQueue.accepting() || int32_t(now-_audioRetentionRetry)<0) return;
     Request request;request.operation=Operation::RetainAudio;request.offset=_maxVoiceMessages;request.key=_protectedVoiceRecord;
     const auto accepted=submit(request);

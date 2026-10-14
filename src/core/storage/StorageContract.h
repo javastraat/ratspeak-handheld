@@ -99,6 +99,7 @@ struct Request {
     uint8_t status = 0; // persisted LXMFStatus numeric value
     messaging::DeliveryPolicy deliveryPolicy = messaging::DeliveryPolicy::DirectOnly;
     bool read = false;
+    bool existingOnly = false; // MarkRead: rewrite existing copies only, never add a mirror
     bool hasMessageId = false;
     HistoryDirection historyDirection = HistoryDirection::Before;
     // Conversation pages use (timestamp, key.peer), while a detail query binds
