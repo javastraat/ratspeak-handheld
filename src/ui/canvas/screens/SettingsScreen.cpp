@@ -1133,9 +1133,10 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
                 if (!event.repeat) selectNetwork(selected.value);
                 break;
             case RowAction::AutoDiscover: {
+                // The network owner starts or stops discovery live.
                 UserScalars next = _config->settings();
                 next.autoIfaceEnabled = !next.autoIfaceEnabled;
-                if (applyScalars(next)) showToast("Reboot to apply");
+                applyScalars(next);
                 buildWiFiMenu(); restoreRow(selected); break;
             }
             case RowAction::TCPAdd:
