@@ -1177,6 +1177,7 @@ void setup() {
         keyboard.backlightOn();
     }
 
+    powerMgr.activity(); // Idle timeouts start after boot, as on the other boards.
     Serial.println("[BOOT] rsPager ready");
     Serial.printf("[BOOT] Summary: radio=%s flash=%s sd=%s\n",
                   radioOnline ? "ONLINE" : "OFFLINE",
