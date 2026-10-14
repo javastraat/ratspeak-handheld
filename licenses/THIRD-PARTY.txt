@@ -17480,8 +17480,8 @@ Licensed under the MIT license.
 The same license text is reproduced above under Arduino: Adafruit ST7735 and ST7789 Library / MIT permission and disclaimer.
 
 ========================================================================
-rsLXMFLite bf9bda768b9268f6476667c30d5c7dd1b4f33734
-https://github.com/ratspeak/rsLXMFLite/tree/bf9bda768b9268f6476667c30d5c7dd1b4f33734
+rsLXMFLite 5a35797c720f7483f3b19a26f3fb6d9710af2fa3
+https://github.com/ratspeak/rsLXMFLite/tree/5a35797c720f7483f3b19a26f3fb6d9710af2fa3
 Boards: tdeck, tpager, cardputer, m9
 Modes: standalone
 
@@ -18150,8 +18150,8 @@ For more information on this, and how to apply and follow the GNU AGPL, see
 
 
 ========================================================================
-rsLXST 5638cf7cf0dade59a3da2daf2f15ffeac94e3fa8
-https://github.com/ratspeak/rsLXST/tree/5638cf7cf0dade59a3da2daf2f15ffeac94e3fa8
+rsLXST 07ab7d79559864a5756ec8cb90c92456a31e259e
+https://github.com/ratspeak/rsLXST/tree/07ab7d79559864a5756ec8cb90c92456a31e259e
 Boards: tdeck, tpager, cardputer, m9
 Modes: standalone
 
@@ -18159,8 +18159,8 @@ Modes: standalone
 The same license text is reproduced above under rsLXMFLite / LICENSE.
 
 ========================================================================
-rsLXST native Codec2 5638cf7cf0dade59a3da2daf2f15ffeac94e3fa8
-https://github.com/ratspeak/rsLXST/tree/5638cf7cf0dade59a3da2daf2f15ffeac94e3fa8/crates/lxst-codec2
+rsLXST native Codec2 07ab7d79559864a5756ec8cb90c92456a31e259e
+https://github.com/ratspeak/rsLXST/tree/07ab7d79559864a5756ec8cb90c92456a31e259e/crates/lxst-codec2
 Boards: tdeck, tpager, cardputer, m9
 Modes: standalone
 
@@ -18806,8 +18806,8 @@ fn main() -> std::io::Result<()> {
 
 
 ========================================================================
-rsReticulumLite 8ef389c48ef9424728b4aeaa215e44ad218301f6
-https://github.com/ratspeak/rsReticulumLite/tree/8ef389c48ef9424728b4aeaa215e44ad218301f6
+rsReticulumLite 22bcbbe4a9f5535a4c81618f691696451472f126
+https://github.com/ratspeak/rsReticulumLite/tree/22bcbbe4a9f5535a4c81618f691696451472f126
 Boards: tdeck, tpager, cardputer, m9
 Modes: standalone
 
