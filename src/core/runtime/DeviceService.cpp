@@ -1,6 +1,7 @@
 #include "DeviceService.h"
 #include "MaintenanceOperation.h"
 #include "config/SettingsTransaction.h"
+#include "config/NetworkSettings.h"
 #include "util/AnnounceData.h"
 #include "history/HistoryWindow.h"
 #include "history/ConversationWindow.h"
@@ -223,7 +224,9 @@ void DeviceService::finishSettings(uint8_t slot) {
             tzset();
         }
         if (applyPeripherals) applyPeripherals(_config.settings());
+        if (networkCommitted) networkCommitted(_config.settings(), _networkChanges);
     }
+    _networkChanges = network_settings::None;
     // During maintenance the records may settle, but UI callbacks must not
     // reopen onboarding or perform hardware actions after shutdown admission.
     Result result;
@@ -596,7 +599,9 @@ void DeviceService::execute(uint8_t slot) {
                 complete(slot, Outcome::Invalid, "Settings exceed transfer budget"); break;
             }
         }
+        _networkChanges = network_settings::changes(_config.settings(), candidate.settings());
         const auto saved = SettingsTransaction::apply(_config, candidate, _identities, _sd, _flash);
+        if (!saved.complete() && saved.state != SettingsTransaction::State::Pending) _networkChanges = network_settings::None;
         if (saved.state == SettingsTransaction::State::Pending) {
             _settingsSlot = slot;
             _lastIdentityRetry = millis();

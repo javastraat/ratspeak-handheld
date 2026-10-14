@@ -38,6 +38,23 @@ const char* wifiModeLabel(RatWiFiMode mode) {
     }
 }
 
+// Values the running device adopts only after a restart.
+bool rebootFieldsDiffer(const UserSettings& a, const UserSettings& b) {
+    if (a.loraEnabled != b.loraEnabled || a.wifiMode != b.wifiMode || a.wifiSTASelected != b.wifiSTASelected ||
+        a.sdStorageEnabled != b.sdStorageEnabled || a.wifiSTANetworks.size() != b.wifiSTANetworks.size()) return true;
+    for (size_t i = 0; i < a.wifiSTANetworks.size(); ++i) {
+        if (a.wifiSTANetworks[i].ssid != b.wifiSTANetworks[i].ssid ||
+            a.wifiSTANetworks[i].password != b.wifiSTANetworks[i].password) return true;
+    }
+    return false;
+}
+
+bool radioFieldsDiffer(const UserSettings& a, const UserSettings& b) {
+    return a.loraEnabled != b.loraEnabled || a.loraFrequency != b.loraFrequency || a.loraSF != b.loraSF ||
+        a.loraBW != b.loraBW || a.loraCR != b.loraCR || a.loraTxPower != b.loraTxPower ||
+        a.loraPreamble != b.loraPreamble;
+}
+
 String formatRadioFrequency(uint32_t hz) {
     char buf[20];
     unsigned long mhz = hz / 1000000;
@@ -181,9 +198,6 @@ bool LvSettingsScreen::settingNeedsReboot(const SettingItem& item) const {
     if (item.id == SettingId::WiFiProfile) return s.wifiSTASelected != _rebootSnap.wifiSTASelected;
     if (item.id == SettingId::WiFiSsid || item.id == SettingId::WiFiPassword) return interfaceSettingsChanged();
     if (item.id == SettingId::WiFiScan || item.id == SettingId::WiFiForget) return interfaceSettingsChanged();
-    if (item.id == SettingId::TcpServer || item.id == SettingId::TcpHost ||
-        item.id == SettingId::TcpPort) return tcpSettingsChanged();
-    if (item.id == SettingId::LanDiscovery) return s.autoIfaceEnabled != _rebootSnap.autoIfaceEnabled;
     if (item.id == SettingId::SdMessageStore) return storageSettingsChanged();
     return false;
 }
@@ -194,7 +208,7 @@ bool LvSettingsScreen::categoryNeedsReboot(int catIdx) const {
         return loraSettingsChanged();
     }
     if (_categories[catIdx].id == SettingsCategoryId::Network) {
-        return interfaceSettingsChanged() || tcpSettingsChanged();
+        return interfaceSettingsChanged();
     }
     if (_categories[catIdx].id == SettingsCategoryId::Storage) {
         return storageSettingsChanged();
@@ -662,7 +676,7 @@ void LvSettingsScreen::buildItems() {
     idx++;
     _categories.push_back({"Wi-Fi & TCP", netStart, idx - netStart,
         [this, &s]() {
-            if (interfaceSettingsChanged() || tcpSettingsChanged()) return String("Saved - reboot to apply");
+            if (interfaceSettingsChanged()) return String("Saved - reboot to apply");
             String summary = wifiModeLabel(s.wifiMode);
             if (s.wifiMode == RAT_WIFI_STA) {
                 String ssid = selectedWiFiSSID(s);
@@ -736,7 +750,7 @@ void LvSettingsScreen::buildItems() {
         idSwitch.type = SettingType::ENUM_CHOICE;
         idSwitch.getter = [this]() { return _service->activeIdentity(); };
         idSwitch.setter = [this](int v) {
-            if (!_service || v < 0 || size_t(v) >= _identityHashes.size()) return;
+            if (!_service || v < 0 || size_t(v) >= _identityHashes.size() || v == _service->activeIdentity()) return;
             _service->lifecycle(handheld::Operation::SwitchIdentity, _identityHashes[v]);
         };
         idSwitch.minVal = 0;
@@ -952,8 +966,9 @@ void LvSettingsScreen::buildItems() {
 
     _items.push_back({"Estimated Charge", SettingType::READONLY, nullptr, nullptr,
         [this](int) -> String {
-            if (!_power) return String("--");
-            return String(_power->batteryPercent()) + "%";
+            // A gauge that is not ready reports a negative charge.
+            const int percent = _power ? _power->batteryPercent() : -1;
+            return percent < 0 ? String("--") : String(percent) + "%";
         }});
     _items.back().id = SettingId::EstimatedCharge;
     idx++;
@@ -999,10 +1014,11 @@ void LvSettingsScreen::buildItems() {
     _categories.push_back({"Battery", battStart, idx - battStart,
         [this, &s]() -> String {
             String summary = s.batteryDisplay == BATTERY_DISPLAY_PERCENT ? String("Percent") : String("Bar");
-            if (_power) {
+            const int percent = _power ? _power->batteryPercent() : -1;
+            if (percent >= 0) {
                 summary += " / ";
                 char buf[8];
-                snprintf(buf, sizeof(buf), "%d%%", _power->batteryPercent());
+                snprintf(buf, sizeof(buf), "%d%%", percent);
                 summary += buf;
             }
             return summary;
@@ -1088,7 +1104,7 @@ void LvSettingsScreen::buildItems() {
     }
     _categories.push_back({"Storage", sysStart, idx - sysStart,
         [this](){
-            if (_rebootNeeded) return String("Reboot pending");
+            if (storageSettingsChanged()) return String("Reboot pending");
             return (_service && _service->status().sd) ? String("SD ready") : String("Flash only");
         }});
     _categories.back().id = SettingsCategoryId::Storage;
@@ -1287,7 +1303,6 @@ void LvSettingsScreen::onEnter() {
     _editValueLbl = nullptr;
     _wifiTargetSlot = 0;
     clearConfirmations();
-    _kbBrightness = _cfg ? _cfg->settings().keyboardBrightness : 0;
     rebuildCategoryList();
 }
 
@@ -1382,6 +1397,7 @@ void LvSettingsScreen::showWifiPicker() {
 
 void LvSettingsScreen::rebuildCategoryList() {
     if (!_scrollContainer) return;
+    lv_obj_set_style_bg_color(_scrollContainer, lv_color_hex(Theme::BG), 0); // Follow theme changes.
     _rebuildingList = true;
     _rowObjs.clear();
     lv_obj_clean(_scrollContainer);
@@ -1488,6 +1504,7 @@ void LvSettingsScreen::rebuildItemList() {
     // Group removal/registration fires focus events synchronously. Those
     // transient events must not replace the intended selection during rebuild.
     _rebuildingList = true;
+    lv_obj_set_style_bg_color(_scrollContainer, lv_color_hex(Theme::BG), 0); // Follow theme changes.
     _rowObjs.clear();
     _editValueLbl = nullptr;  // Invalidate cached label before destroying widgets
     lv_obj_clean(_scrollContainer);
@@ -1524,7 +1541,8 @@ void LvSettingsScreen::rebuildItemList() {
     lv_label_set_text(headerLbl, headerBuf);
     lv_obj_align(headerLbl, LV_ALIGN_LEFT_MID, 8, 0);
 
-    if (_rebootNeeded) {
+    const bool categoryPending = categoryNeedsReboot(_categoryIdx);
+    if (categoryPending) {
         lv_obj_t* pendingLbl = lv_label_create(headerRow);
         lv_obj_set_style_text_font(pendingLbl, &lv_font_rsdeck_10, 0);
         lv_obj_set_style_text_color(pendingLbl, lv_color_hex(Theme::WARNING_CLR), 0);
@@ -1532,7 +1550,7 @@ void LvSettingsScreen::rebuildItemList() {
         lv_obj_align(pendingLbl, LV_ALIGN_RIGHT_MID, -8, 0);
     }
 
-    if (_rebootNeeded) {
+    if (categoryPending) {
         lv_obj_t* notice = lv_obj_create(_scrollContainer);
         lv_obj_set_size(notice, Theme::CONTENT_W, 20);
         lv_obj_set_style_bg_color(notice, lv_color_hex(Theme::PRIMARY_SUBTLE), 0);
@@ -1548,7 +1566,7 @@ void LvSettingsScreen::rebuildItemList() {
         lv_obj_set_style_text_font(noticeLbl, &lv_font_rsdeck_10, 0);
         lv_obj_set_style_text_color(noticeLbl, lv_color_hex(Theme::WARNING_CLR), 0);
         clipLabel(noticeLbl, Theme::CONTENT_W - 16);
-        lv_label_set_text(noticeLbl, "Saved interface config is pending reboot");
+        lv_label_set_text(noticeLbl, "Saved changes here apply after reboot");
         lv_obj_align(noticeLbl, LV_ALIGN_LEFT_MID, 8, 0);
     }
 
@@ -2187,7 +2205,8 @@ bool LvSettingsScreen::handleKey(const KeyEvent& event) {
                         if (_ui) _ui->lvStatusBar().showToast("Settings memory unavailable; retry", 2000);
                         return true;
                     }
-                    if (!applyAndSave()) return true;
+                    // A slot switch is a restart request, not a settings save.
+                    if (item.id != SettingId::IdentitySlot && !applyAndSave()) return true;
                     _editing = false;
                     _numericTyping = false;
                     rebuildItemList(); return true;
@@ -2376,14 +2395,12 @@ void LvSettingsScreen::snapshotRebootSettings() {
     _rebootSnap.wifiMode = s.wifiMode;
     _rebootSnap.wifiSTANetworks = s.wifiSTANetworks;
     _rebootSnap.wifiSTASelected = s.wifiSTASelected;
-    _rebootSnap.autoIfaceEnabled = s.autoIfaceEnabled;
     _rebootSnap.sdStorageEnabled = s.sdStorageEnabled;
     _rebootSnap.loraEnabled = s.loraEnabled;
 }
 
 bool LvSettingsScreen::rebootSettingsChanged() const {
-    return loraSettingsChanged() || interfaceSettingsChanged()
-        || storageSettingsChanged() || tcpSettingsChanged();
+    return loraSettingsChanged() || interfaceSettingsChanged() || storageSettingsChanged();
 }
 
 bool LvSettingsScreen::loraSettingsChanged() const {
@@ -2396,7 +2413,6 @@ bool LvSettingsScreen::interfaceSettingsChanged() const {
     const auto& s = _cfg->settings();
     if (s.wifiMode != _rebootSnap.wifiMode) return true;
     if (s.wifiSTASelected != _rebootSnap.wifiSTASelected) return true;
-    if (s.autoIfaceEnabled != _rebootSnap.autoIfaceEnabled) return true;
     if (s.wifiSTANetworks.size() != _rebootSnap.wifiSTANetworks.size()) return true;
     for (size_t i = 0; i < s.wifiSTANetworks.size(); i++) {
         if (s.wifiSTANetworks[i].ssid != _rebootSnap.wifiSTANetworks[i].ssid) return true;
@@ -2408,22 +2424,6 @@ bool LvSettingsScreen::interfaceSettingsChanged() const {
 bool LvSettingsScreen::storageSettingsChanged() const {
     if (!_cfg) return false;
     return _cfg->settings().sdStorageEnabled != _rebootSnap.sdStorageEnabled;
-}
-
-void LvSettingsScreen::snapshotTCPSettings() {
-    if (!_cfg) return;
-    _tcpSnap = _cfg->settings().tcpConnections;
-}
-
-bool LvSettingsScreen::tcpSettingsChanged() const {
-    if (!_cfg) return false;
-    const auto& endpoints = _cfg->settings().tcpConnections;
-    if (endpoints.size() != _tcpSnap.size()) return true;
-    for (size_t i = 0; i < endpoints.size(); ++i) {
-        if (endpoints[i].host != _tcpSnap[i].host || endpoints[i].port != _tcpSnap[i].port ||
-            endpoints[i].autoConnect != _tcpSnap[i].autoConnect) return true;
-    }
-    return false;
 }
 
 // --- Frequency digit-cursor editor helpers ---
@@ -2467,9 +2467,12 @@ String LvSettingsScreen::freqFormatWithCursor() const {
 bool LvSettingsScreen::applyAndSave(bool rebuildItems) {
     if (!_service || !_cfg) return false;
     const bool wasRebootNeeded = _rebootNeeded;
-    const bool tcpChanged = tcpSettingsChanged();
+    // Report only what this save changed; re-apply the radio only for radio edits.
+    const auto& committed = _service->committed().settings();
+    const bool rebootChange = rebootFieldsDiffer(_cfg->settings(), committed);
+    const bool radioChange = radioFieldsDiffer(_cfg->settings(), committed);
     const auto generation = _fwViewGeneration;
-    const bool admitted = _service->applySettings([this, wasRebootNeeded, tcpChanged, generation, rebuildItems](const handheld::Result& result) {
+    const bool admitted = _service->applySettings([this, wasRebootNeeded, rebootChange, generation, rebuildItems](const handheld::Result& result) {
         _rebootNeeded = rebootSettingsChanged();
         _itemsNeedRebuild |= rebuildItems || _service->settingsPending();
         if (!_viewActive || generation != _fwViewGeneration) {
@@ -2481,10 +2484,10 @@ bool LvSettingsScreen::applyAndSave(bool rebuildItems) {
         if (_screen && _view == SettingsView::ITEM_LIST && !rebuildItems) rebuildItemList();
         if (!_ui || result.outcome != handheld::Outcome::Ok) return;
         _ui->lvStatusBar().showToast(
-            _rebootNeeded ? (tcpChanged ? "TCP server saved; reboot to apply" : "Interface changes saved; reboot to apply") :
-            wasRebootNeeded ? "Pending reboot cleared" :
+            rebootChange && _rebootNeeded ? "Saved; reboot to apply" :
+            wasRebootNeeded && !_rebootNeeded ? "Pending reboot cleared" :
             result.detail[0] ? result.detail : "Saved", 2000);
-    });
+    }, radioChange);
     if (!admitted) {
         // Local refusal can retain the candidate in ServiceClient. Keep only
         // this editor's small draft, so later saves cannot include abandoned edits.

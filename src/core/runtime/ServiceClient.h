@@ -100,6 +100,8 @@ public:
     // cannot allocate, block further saves until the normal canonical refresh.
     // An already accepted request/query retains its completion ownership.
     bool discardSettingsEdit();
+    // Last device-confirmed settings; the draft in `config` is compared against it.
+    const UserConfig& committed() const { return _committed; }
     bool available() const { return _mailbox.accepting(); }
     bool settingsPending() const { return _settingsPending || _settingsQuery || _settingsRefresh; }
     void watchHistory(const std::string& peer);

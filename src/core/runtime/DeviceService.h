@@ -40,6 +40,8 @@ public:
     // false cancels only the live continuation after maintenance closes admission.
     std::function<RadioApply(const UserSettings&, bool)> applyRadio;
     std::function<void(const UserSettings&)> applyPeripherals;
+    // TCP endpoints and hotspot credentials apply live (network_settings::Change bits).
+    std::function<void(const UserSettings&, uint8_t)> networkCommitted;
     std::function<void()> homeReady;
     std::function<void(uint32_t)> diagnostics;
     std::function<void()> closeAdmissions;
@@ -96,6 +98,7 @@ private:
     uint8_t _querySlot = ServiceMailbox::NoSlot;
     uint8_t _scanSlot = ServiceMailbox::NoSlot;
     uint8_t _settingsSlot = ServiceMailbox::NoSlot;
+    uint8_t _networkChanges = 0;
     uint8_t _lifecycleSlot = ServiceMailbox::NoSlot;
     MaintenanceBarrier _maintenance;
     bool _storageOwnerBound = false;

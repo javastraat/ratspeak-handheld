@@ -36,15 +36,15 @@ void NetworkCoordinator::retireTransports() {
     _connected = false; _deferred = false; _reload = false;
     _apApply = false; _apResult = HotspotResult::None;
 }
-bool NetworkCoordinator::begin(const UserSettings& settings) {
+bool NetworkCoordinator::begin(const UserSettings& settings, RatWiFiMode mode) {
     if (_closed) return false;
     WiFiConnection::initializeEvents();
     retireTransports();
     _wifi.stop(); _helpersStopped = false;
     WiFi.disconnect(false);
-    if (settings.wifiMode == RAT_WIFI_STA) return _wifi.begin(settings);
-    if (settings.wifiMode == RAT_WIFI_OFF) return WiFi.mode(WIFI_OFF);
-    if (settings.wifiMode != RAT_WIFI_AP) return false;
+    if (mode == RAT_WIFI_STA) return _wifi.begin(settings);
+    if (mode == RAT_WIFI_OFF) return WiFi.mode(WIFI_OFF);
+    if (mode != RAT_WIFI_AP) return false;
     _ap = new (std::nothrow) WiFiInterface();
     if (!_ap) { WiFi.mode(WIFI_OFF); return false; }
     // An empty SSID still selects the generated name; its saved password applies.

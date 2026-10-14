@@ -72,7 +72,6 @@ public:
         _cfg = cfg;
         // Bind once at boot, before Home or Settings can change reboot-only values.
         snapshotRebootSettings();
-        snapshotTCPSettings();
     }
     void setAudio(AudioNotify* audio) { _audio = audio; }
     void setPower(Power* power) { _power = power; }
@@ -209,7 +208,6 @@ private:
         RatWiFiMode wifiMode;
         std::vector<WiFiNetwork> wifiSTANetworks;
         uint8_t wifiSTASelected;
-        bool autoIfaceEnabled;
         bool sdStorageEnabled;
         bool loraEnabled;
     };
@@ -220,13 +218,6 @@ private:
     bool storageSettingsChanged() const;
     bool rebootSettingsChanged() const;
 
-    // TCP change detection
-    std::vector<TCPEndpoint> _tcpSnap;
-    void snapshotTCPSettings();
-    bool tcpSettingsChanged() const;
-
-    // Keyboard backlight change detection
-    uint8_t _kbBrightness = 0;
     uint32_t _lastIdentityRevision = 0;
     std::vector<std::string> _identityHashes;
     uint32_t _fwViewGeneration = 0, _fwRequestGeneration = 0;

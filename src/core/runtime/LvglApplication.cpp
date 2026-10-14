@@ -786,10 +786,8 @@ void handheld::lvgl_application::setup() {
     bootTraceStage("identity-name-sync");
 
     // Step 20: Boot loop recovery
-    if (bootLoopRecovery) {
-        userConfig.settings().wifiMode = RAT_WIFI_OFF;
-        Serial.println("[BOOT] WiFi forced OFF (boot loop recovery)");
-    }
+    // This boot only; a later save must not persist the recovery mode.
+    if (bootLoopRecovery) Serial.println("[BOOT] WiFi forced OFF (boot loop recovery)");
     lvBootScreen.setProgress(0.83f, "Config loaded");
     // (LVGL boot renders via lv_timer_handler in setProgress)
     bootTraceStage("bootloop-recovery");
@@ -808,11 +806,11 @@ void handheld::lvgl_application::setup() {
     bootTraceStage("radio-config");
 
     // Step 22: WiFi start
-    RatWiFiMode wifiMode = userConfig.settings().wifiMode;
+    const RatWiFiMode wifiMode = bootLoopRecovery ? RAT_WIFI_OFF : userConfig.settings().wifiMode;
     ::ui.lvStatusBar().setWiFiEnabled(wifiMode != RAT_WIFI_OFF);
     lvBootScreen.setProgress(0.87f, wifiMode == RAT_WIFI_AP ? "Starting WiFi AP..." :
         wifiMode == RAT_WIFI_STA ? "WiFi STA starting..." : "WiFi disabled");
-    if (!network.begin(userConfig.settings())) Serial.println("[WIFI] Selected mode could not start");
+    if (!network.begin(userConfig.settings(), wifiMode)) Serial.println("[WIFI] Selected mode could not start");
     ::ui.lvStatusBar().setWiFiActive(network.accessPoint() && network.accessPoint()->isAPActive());
     bootTraceStage("wifi-start");
 
@@ -921,6 +919,9 @@ void handheld::lvgl_application::setup() {
     deviceService.applyRadio = [](const UserSettings& settings, bool accepting) {
         return applyLiveRadioSettings(radio, rustLoraIface, settings, accepting);
     };
+    deviceService.networkCommitted = [](const UserSettings& s, uint8_t changes) {
+        network.settingsCommitted(s, changes);
+    };
     deviceService.applyPeripherals = [](const UserSettings& s) {
         const auto data = encodeAnnounceName(s.displayName, backend->destinationHashHex().c_str());
         protocolRuntime.seedAnnounceAppData(data.data(), data.size());
@@ -1023,7 +1024,7 @@ void handheld::lvgl_application::setup() {
             }
         }
         serviceClient.applySettings([](const handheld::Result& result) {
-            if (result.outcome == handheld::Outcome::Ok) ::ui.lvStatusBar().showToast("Saved; reboot to apply", 2500);
+            if (result.outcome == handheld::Outcome::Ok) ::ui.lvStatusBar().showToast("TCP saved", 2000);
         }, false);
     });
     lvHomeScreen.setWiFiToggleCallback([]() {
@@ -1552,6 +1553,8 @@ void handheld::lvgl_application::loop() {
             ::ui.lvStatusBar().setCharging(powerMgr.isCharging());
             ::ui.lvStatusBar().setBatteryDisplay(serviceClient.config.settings().batteryDisplay);
             ::ui.lvStatusBar().setUse24Hour(serviceClient.config.settings().use24HourTime);
+            lvMessagesScreen.setUse24Hour(serviceClient.config.settings().use24HourTime);
+            lvMessageView.setUse24Hour(serviceClient.config.settings().use24HourTime);
             ::ui.lvStatusBar().updateTime();
 #if HAS_GPS
             ::ui.lvStatusBar().setGPSFix(status.gpsFix);

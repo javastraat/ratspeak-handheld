@@ -756,19 +756,17 @@ void setup() {
         Serial.println("[CONFIG] Default TCP hubs seeded (off by default)");
     }
 
-    // Boot loop recovery: force WiFi OFF to break crash cycle
-    if (bootLoopRecovery) {
-        userConfig.settings().wifiMode = RAT_WIFI_OFF;
-        Serial.println("[BOOT] WiFi forced OFF (boot loop recovery)");
-    }
+    // Boot loop recovery: force WiFi OFF for this boot only, so a later save
+    // cannot persist it.
+    if (bootLoopRecovery) Serial.println("[BOOT] WiFi forced OFF (boot loop recovery)");
 
     // Mode-based WiFi startup
-    RatWiFiMode wifiMode = userConfig.settings().wifiMode;
+    const RatWiFiMode wifiMode = bootLoopRecovery ? RAT_WIFI_OFF : userConfig.settings().wifiMode;
 
     bootScreen.setProgress(0.95f, wifiMode == RAT_WIFI_AP ? "Starting WiFi AP..." :
         wifiMode == RAT_WIFI_STA ? "WiFi STA starting..." : "WiFi disabled");
     ui.render();
-    if (!network.begin(userConfig.settings())) Serial.println("[WIFI] Selected mode could not start");
+    if (!network.begin(userConfig.settings(), wifiMode)) Serial.println("[WIFI] Selected mode could not start");
 
     // BLE disabled
     Serial.println("[BLE] Disabled (stub — v1.1)");

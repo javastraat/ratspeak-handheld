@@ -23,7 +23,9 @@ public:
     NetworkCoordinator(const NetworkCoordinator&) = delete;
     NetworkCoordinator& operator=(const NetworkCoordinator&) = delete;
     // Fresh selection/reset; false means the selected mode could not start.
-    bool begin(const UserSettings& settings);
+    bool begin(const UserSettings& settings) { return begin(settings, settings.wifiMode); }
+    // Boot-loop recovery starts in a mode other than the saved one, without saving it.
+    bool begin(const UserSettings& settings, RatWiFiMode mode);
     // Executed immediately before the optional AP change, after normal network
     // work. A missing predicate denies live AP changes, never ordinary polling.
     using HotspotAdmission = bool (*)();
