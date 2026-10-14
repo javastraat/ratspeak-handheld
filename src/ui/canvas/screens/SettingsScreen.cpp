@@ -181,6 +181,7 @@ void SettingsScreen::rebuildMenu() {
         case MENU_RADIO: buildRadioMenu(); break;
         case MENU_RADIO_PRESETS: buildRadioPresetsMenu(); break;
         case MENU_WIFI: buildWiFiMenu(); break;
+        case MENU_WIFI_MODE: buildWiFiModeMenu(); break;
         case MENU_TCP: buildTCPMenu(); break;
         case MENU_SDCARD: buildSDCardMenu(); break;
         case MENU_DISPLAY: buildDisplayMenu(); break;
@@ -210,7 +211,7 @@ void SettingsScreen::backMenu() {
         std::vector<WiFiNetwork>().swap(_scanResults);
     }
     _subMenu = child == MENU_RADIO_PRESETS ? MENU_RADIO :
-        child == MENU_TCP || child == MENU_WIFI_SCAN ? MENU_WIFI :
+        child == MENU_TCP || child == MENU_WIFI_SCAN || child == MENU_WIFI_MODE ? MENU_WIFI :
         child == MENU_PROPAGATION_NODES ? MENU_PROPAGATION_CHOICE :
         child == MENU_PROPAGATION_CHOICE ? MENU_PROPAGATION : MENU_MAIN;
     rebuildMenu();
@@ -280,7 +281,7 @@ void SettingsScreen::buildWiFiMenu() {
     const char* modeNames[] = {"OFF", "AP", "STA"};
     char modeBuf[24];
     snprintf(modeBuf, sizeof(modeBuf), "Mode: %s", modeNames[s.wifiMode]);
-    addRow(modeBuf, RowAction::WiFiMode);
+    addRow(modeBuf, RowAction::OpenMenu, MENU_WIFI_MODE);
 
     if (s.wifiMode == RAT_WIFI_AP) {
         addRow(("AP SSID: " + std::string(s.wifiAPSSID.isEmpty() ? "(auto)" : s.wifiAPSSID.c_str())), RowAction::Edit, 0);
@@ -332,6 +333,20 @@ void SettingsScreen::buildTCPMenu() {
     }
 
     addRow("< Back", RowAction::Back);
+}
+
+void SettingsScreen::buildWiFiModeMenu() {
+    clearRows();
+    if (!_config) return;
+    const RatWiFiMode active = settingsView().wifiMode;
+    const char* names[] = {"OFF", "AP hotspot", "STA client"};
+    for (uint8_t mode = RAT_WIFI_OFF; mode <= RAT_WIFI_STA; ++mode) {
+        char label[24];
+        snprintf(label, sizeof(label), "%s[%s]", mode == active ? ">" : " ", names[mode]);
+        addRow(label, RowAction::WiFiMode, mode, mode == active ? Theme::PRIMARY : 0);
+    }
+    addRow("< Back", RowAction::Back);
+    _list.setSelected(active);
 }
 
 bool SettingsScreen::addTCPConnection(const std::string& host, uint16_t port) {
@@ -657,6 +672,9 @@ void SettingsScreen::startEditing(int field, const std::string& currentValue) {
     }
     _editInput.setActive(true);
     _editInput.setMaxLength(_subMenu == MENU_WIFI && field == 0 ? 32 : 64);
+    // Unsigned numeric fields take digits only; TX power keeps its sign.
+    _editInput.setNumericOnly(_subMenu == MENU_DISPLAY || _subMenu == MENU_AUDIO || _subMenu == MENU_VOICE ||
+        (_subMenu == MENU_RADIO && field != 4) || (_subMenu == MENU_IDENTITY && field == 4));
     _editInput.setSubmitCallback([this](const std::string& value) {
         commitEdit(value);
     });
@@ -699,11 +717,16 @@ void SettingsScreen::commitEdit(const std::string& value) {
     try {
 
     if (_subMenu == MENU_VOICE) {
-        int32_t limit;
-        if(_editField!=1 || !handheld::settings::parseInteger(value,1,50,limit)) {showToast("Enter a number from 1 to 50");return;}
-        next.voice.maxMessages=uint8_t(limit);
-        if(!applyScalars(next)) return;
-        buildVoiceMenu();_list.setSelected(1);
+        int32_t v;
+        if (_editField == 0) {
+            if (!handheld::settings::parseInteger(value, 0, 100, v)) { showToast("Volume: 0-100%"); return; }
+            next.voice.volume = uint8_t(v);
+        } else if (_editField == 1) {
+            if (!handheld::settings::parseInteger(value, 1, 50, v)) { showToast("Enter a number from 1 to 50"); return; }
+            next.voice.maxMessages = uint8_t(v);
+        } else return;
+        if (!applyScalars(next)) return;
+        buildVoiceMenu();
     } else if (_subMenu == MENU_PROPAGATION_CHOICE) {
         handheld::propagation::Settings parsed;
         if (value.size() != 32 || !parsed.setManual(value.data(), value.size())) {
@@ -798,14 +821,23 @@ void SettingsScreen::commitEdit(const std::string& value) {
         if (_editField == 3) {
             if (!ensureCandidate() || !assign(_candidate->settings().displayName) || !applyAndSave()) return;
         } else {
+            // Off may not precede dim: the edited value stands, its pair follows visibly.
+            const char* paired = nullptr;
             switch (_editField) {
                 case 0: next.brightness = (uint8_t)v; break;
-                case 1: next.screenDimTimeout = (uint16_t)v; break;
-                case 2: next.screenOffTimeout = (uint16_t)v; break;
+                case 1:
+                    next.screenDimTimeout = (uint16_t)v;
+                    if (next.screenOffTimeout < v) { next.screenOffTimeout = (uint16_t)v; paired = "Saved; off timeout raised to dim"; }
+                    break;
+                case 2:
+                    next.screenOffTimeout = (uint16_t)v;
+                    if (next.screenDimTimeout > v) { next.screenDimTimeout = (uint16_t)v; paired = "Saved; dim timeout lowered to off"; }
+                    break;
                 case 4: next.announceInterval = uint16_t(v); break;
                 default: return;
             }
             if (!applyScalars(next)) return;
+            if (paired) showToast(paired, 2500);
         }
         if (_subMenu == MENU_IDENTITY) buildIdentityMenu();
         else buildDisplayMenu();
@@ -898,7 +930,7 @@ void SettingsScreen::render(M5Canvas& canvas) {
     const char* headers[] = {"SETTINGS", "LORA", "WI-FI & TCP", "TCP CONNECTIONS",
                              "SD CARD", "DISPLAY", "ALERTS", "DEVICE", "WIFI SCAN",
                              "PROPAGATION", "MANUAL NODE", "PROPAGATION NODES", "VOICE MESSAGES",
-                             "IDENTITY", "LINK PRESETS"};
+                             "IDENTITY", "LINK PRESETS", "WI-FI MODE"};
     static_assert(sizeof(headers) / sizeof(headers[0]) == MENU_COUNT,
                   "Every settings menu needs a visible header");
     const int headerH = Theme::SECTION_HEADER_H;
@@ -936,8 +968,8 @@ void SettingsScreen::render(M5Canvas& canvas) {
 
     // Confirmation dialog overlay
     if (_confirmPending) {
-        const char* prompt = _confirmAction == 0 ?
-            "Factory Reset? Y/N" : "Wipe SD Data? Y/N";
+        const char* prompt = _confirmAction == 0 ? "Factory Reset? Y/N" :
+            _confirmAction == 1 ? "Wipe SD Data? Y/N" : "Init SD & Restart? Y/N";
         int tw = strlen(prompt) * Theme::CHAR_W + 16;
         int th = Theme::CHAR_H + 10;
         int tx = (Theme::CONTENT_W - tw) / 2;
@@ -985,6 +1017,8 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
             _confirmPending = false;
             if (_confirmAction == 0) {
                 factoryReset();
+            } else if (_confirmAction == 2) {
+                sdCardFormat();
             } else {
                 if (_sdStore && _sdStore->isReady()) {
                     requestMaintenance(handheld::Operation::WipeSD);
@@ -1079,10 +1113,15 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
                 startEditing(selected.value, getCurrentValue(_subMenu, selected.value)); break;
             case RowAction::Preset: applyRadioPreset(selected.value); break;
             case RowAction::WiFiMode: {
+                // One save per explicit choice; reselecting the active mode only returns.
                 UserScalars next = _config->settings();
-                next.wifiMode = RatWiFiMode((int(next.wifiMode) + 1) % 3);
-                if (applyScalars(next)) showToast("Reboot to apply");
-                buildWiFiMenu(); break;
+                if (next.wifiMode != RatWiFiMode(selected.value)) {
+                    next.wifiMode = RatWiFiMode(selected.value);
+                    if (next.wifiMode != RAT_WIFI_OFF) next.wifiRestoreMode = next.wifiMode;
+                    if (!applyScalars(next)) break;
+                    showToast("Reboot to apply");
+                }
+                backMenu(); break;
             }
             case RowAction::WiFiConnection:
                 if (!event.repeat) activateWiFiAction();
@@ -1108,11 +1147,10 @@ bool SettingsScreen::handleKey(const KeyEvent& event) {
                 UserScalars next = _config->settings(); next.audioEnabled = !next.audioEnabled;
                 applyScalars(next); buildAudioMenu(); break;
             }
-            case RowAction::SDInitialize: sdCardFormat(); break;
-            case RowAction::SDWipe:
+            case RowAction::SDInitialize: case RowAction::SDWipe:
                 if (_sdStore && _sdStore->isReady()) {
-                    _confirmPending = true; _confirmAction = 1;
-                }
+                    _confirmPending = true; _confirmAction = selected.action == RowAction::SDWipe ? 1 : 2;
+                } else showToast("No SD card");
                 break;
             case RowAction::FactoryReset: _confirmPending = true; _confirmAction = 0; break;
             case RowAction::Voice: activateVoiceRow(selected.value); break;

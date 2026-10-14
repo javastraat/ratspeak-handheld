@@ -7,9 +7,10 @@ void SettingsScreen::buildVoiceMenu() {
     addRow("< Back", RowAction::Back);
 }
 void SettingsScreen::activateVoiceRow(int row) {
-    if(!_config || _config->settingsPending() || _radioApplyPending) return;
-    if(row==1) {startEditing(row,std::to_string(signed(settingsView().voice.maxMessages)));_editLabel="Max voice messages: 1-50";_editInput.setMaxLength(2);return;}
-    if(row!=0) return;
-    UserScalars next=_config->settings();auto& s=next.voice;s.volume=s.volume>=100?0:s.volume+10;
-    applyScalars(next);buildVoiceMenu();_list.setSelected(row);
+    if(!_config || _config->settingsPending() || _radioApplyPending || (row!=0 && row!=1)) return;
+    const auto& s=settingsView().voice;
+    startEditing(row,std::to_string(unsigned(row==0?s.volume:s.maxMessages)));
+    if(!_editing) return;
+    _editLabel=row==0?"Playback volume: 0-100%":"Max voice messages: 1-50";
+    _editInput.setMaxLength(row==0?3:2);
 }

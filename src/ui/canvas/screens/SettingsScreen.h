@@ -66,7 +66,7 @@ private:
     enum SubMenu { MENU_MAIN, MENU_RADIO, MENU_WIFI, MENU_TCP, MENU_SDCARD,
                    MENU_DISPLAY, MENU_AUDIO, MENU_ABOUT, MENU_WIFI_SCAN,
                    MENU_PROPAGATION, MENU_PROPAGATION_CHOICE, MENU_PROPAGATION_NODES, MENU_VOICE,
-                   MENU_IDENTITY, MENU_RADIO_PRESETS, MENU_COUNT };
+                   MENU_IDENTITY, MENU_RADIO_PRESETS, MENU_WIFI_MODE, MENU_COUNT };
 
     // Routing lives alongside each visible row, independent of its position.
     // The largest list is the bounded propagation snapshot: two rows per node.
@@ -106,6 +106,7 @@ private:
     void buildRadioMenu();
     void buildRadioPresetsMenu();
     void buildWiFiMenu();
+    void buildWiFiModeMenu();
     void buildTCPMenu();
     void buildSDCardMenu();
     void sdCardFormat();
@@ -186,5 +187,5 @@ private:
 
     // Confirmation dialog state
     bool _confirmPending = false;
-    int _confirmAction = 0;  // 0=factory reset, 1=SD wipe
+    int _confirmAction = 0;  // 0=factory reset, 1=SD wipe, 2=SD initialize
 };
