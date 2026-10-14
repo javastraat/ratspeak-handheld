@@ -25,8 +25,27 @@ test "$ver" = "$(python3 ../tools/release_identity.py toolchain)" || {
 
 source_fingerprint="$(python3 ../tools/source_fingerprint.py)"
 
+# Cargo hashes the absolute path of out-of-workspace path dependencies into
+# symbol names, and panic locations embed source paths. Build through one fixed
+# stage of links to this checkout's sources and remap the stage, registry and
+# sysroot, so any checkout of the selected sources reproduces the same bytes.
+stage=/tmp/ratspeak-handheld-xtensa
+mkdir "$stage" || { echo "ERROR: $stage exists (concurrent or interrupted build)" >&2; exit 1; }
+trap 'rm -f -- "$stage"/*; rmdir -- "$stage"' EXIT
+ln -s "$(cd .. && pwd -P)" "$stage/ratspeak-handheld"
+for sibling in rsReticulumLite rsLXMFLite rsLXST rsReticulum rsLXMF; do
+    ln -s "$(cd ../.. && pwd -P)/$sibling" "$stage/$sibling"
+done
+remaps=(
+    "--remap-path-prefix=$stage=/ratspeak"
+    "--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}/registry/src=/cargo/registry/src"
+    "--remap-path-prefix=$(rustc +esp --print sysroot)/lib/rustlib/src/rust=/rustc/$(rustc +esp -vV | sed -n 's/^commit-hash: //p')"
+)
+export CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${remaps[*]}")"
+
 for profile in small micro; do
     cargo +esp build -p ratspeak-handheld-protocol \
+        --manifest-path "$stage/ratspeak-handheld/protocol/Cargo.toml" \
         --profile xtensa \
         --target xtensa-esp32s3-none-elf \
         --no-default-features \
