@@ -222,8 +222,10 @@ bool AudioNotify::setCodecMute(bool mute) {
     return updateCodecReg(ES8311_DAC_REG31, 0x60, mute ? 0x60 : 0x00);
 }
 
+// Volume scales the samples (as on the T-Deck); the codec holds its full
+// reference gain while audible, so the level is not attenuated twice.
 bool AudioNotify::setCodecVolume(uint8_t volume) {
-    return writeCodecReg(ES8311_DAC_REG32, codecVolumeReg(volume));
+    return writeCodecReg(ES8311_DAC_REG32, codecVolumeReg(volume ? 100 : 0));
 }
 
 void AudioNotify::writeTone(uint16_t freq, uint16_t durationMs) {
