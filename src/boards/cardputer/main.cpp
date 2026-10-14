@@ -799,6 +799,8 @@ void setup() {
     bootScreen.setProgress(1.0f, "Ready");
     ui.render();
     audio.playBoot();
+    // The boot announce's flash writes stall the speaker; finish the chime first.
+    audio.drain(1000);
 
     bootComplete = true;
     ui.statusBar().setTransportMode("Ratspeak.org");
