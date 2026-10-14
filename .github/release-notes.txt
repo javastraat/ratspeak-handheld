@@ -1,25 +1,19 @@
-## v2.3.0
-
-### Added
-
-- Added propagation-node discovery, automatic or fixed manual selection, direct-send fallback, and an always-propagated delivery option.
-- Added propagation inbox retrieval for messages held while the handheld is offline.
-- Added short Codec2 700C voice messages on supported T-Deck, T-Pager, and Cardputer Adv hardware, with recording preview and inline playback controls.
-- Added individual message selection, copying, and deletion through each device's touch, wheel, or keyboard controls.
-- Added a saved limit for voice clips on internal storage, defaulting to two. Older audio is removed while its chat message remains; SD-card storage has no clip-count limit.
+## v2.3.1
 
 ### Fixed and improved
 
-- Reduced conversation-loading work and reused recently opened chat history.
-- Improved recording, repeated playback, pause/resume, and audio-memory cleanup on constrained devices.
-- Returned to the conversation after sending a voice message and kept unsent clips only for the active conversation.
-- Announced the default device name so peers can display it in discovery and chats.
-- Corrected T-Pager charging-state handling across shutdown and firmware modes.
-- Unified launcher titles as Ratspeak and simplified chat navigation and message controls.
+- Reorganized Settings into clearer groups on every device.
+- Applied TCP hub, LAN discovery, and Cardputer Adv brightness changes as soon as they're saved, and limited restart prompts to changes that need one.
+- Fixed "Settings memory unavailable" errors on Cardputer Adv during busy network activity.
+- Improved Cardputer Adv setting inputs, including a number editor for Playback volume and a chooser for Wi-Fi mode.
+- Improved Wi-Fi scanning so it recovers after failed connection attempts.
+- Fixed screen dimming and keyboard backlight not following saved settings.
+- Applied theme and 24-hour clock changes throughout the interface.
+- Fixed the Cardputer Adv startup sound sometimes cutting off, and T-Pager alerts playing quieter than the selected volume.
+- Kept the saved Wi-Fi setting when a device recovers from repeated failed startups.
+- Hardened message links against malformed and spoofed packets.
 
 ### Build and compatibility
 
-- Compact voice messages work with the accompanying Ratspeak app update after it receives the handheld's announce. ThinkNode M9 has no supported audio hardware.
-- Hub/channel support and live handheld calls remain unavailable in this release.
-- Handheld firmware remains in beta. Cardputer requires a Cap LoRa-1262 with an antenna for LoRa.
-- Factory ZIP installations erase settings, identity, and internal message history. Back up anything you want to keep before installing.
+- Settings are now saved only to internal storage, with or without an SD card.
+- Compatible web flasher updates keep identity, messages, and settings. Factory ZIP installations erase them, so back up anything you want to keep.
