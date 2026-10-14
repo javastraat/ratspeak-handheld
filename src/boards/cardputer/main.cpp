@@ -660,11 +660,17 @@ void setup() {
     // Initialize message store + LXMF
     bootScreen.setProgress(0.91f, "Starting messaging...");
     ui.render();
-    if (!handheld::storage::legacyMessageArena().reserve() ||
-        !messageStore.begin(&flash, &sdStore, userConfig.settings().sdStorageEnabled)) {
+    const auto messages = handheld::storage::legacyMessageArena().reserve()
+        ? messageStore.beginForBoot(&flash, &sdStore, userConfig.settings().sdStorageEnabled)
+        : MessageStore::BootResult::Failed;
+    if (messages == MessageStore::BootResult::Failed) {
         bootScreen.setProgress(0.91f, "Storage error - data preserved");
         ui.render();
         for (;;) delay(20);
+    }
+    if (messages == MessageStore::BootResult::InternalOnly) {
+        bootScreen.setProgress(0.91f, "SD messages not loaded");
+        ui.render(); delay(3000);
     }
     // Boot summaries parsed every retained record copy: return the unneeded
     // legacy reserve whole, before the protocol node and networking allocate.

@@ -729,9 +729,14 @@ void handheld::lvgl_application::setup() {
     // Step 16: Message store
     lvBootScreen.setProgress(0.72f, "Starting messaging...");
     // (LVGL boot renders via lv_timer_handler in setProgress)
-    if (!messageStore.begin(&flash, &sdStore, userConfig.settings().sdStorageEnabled)) {
+    const auto messages = messageStore.beginForBoot(&flash, &sdStore, userConfig.settings().sdStorageEnabled);
+    if (messages == MessageStore::BootResult::Failed) {
         lvBootScreen.showError("Storage could not start.\nYour saved messages have been preserved.");
         for (;;) { lv_timer_handler(); delay(20); }
+    }
+    if (messages == MessageStore::BootResult::InternalOnly) {
+        lvBootScreen.setProgress(0.72f, "SD card messages not loaded");
+        for (const unsigned long start = millis(); millis() - start < 3000;) { lv_timer_handler(); delay(20); }
     }
     bootTraceStage("message-store");
 

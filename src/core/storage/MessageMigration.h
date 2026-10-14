@@ -134,7 +134,8 @@ class MessageMigration {
         document.document().remove("read");
         JsonSource source(document); length=source.length(); return source.error()==Error::None;
     }
-    // Unequal revisions may differ in the three mutable storage fields. Compare
+    // Copies may differ in the three mutable storage fields, even at one revision:
+    // legacy rsCardputer rewrote status on each medium separately. Compare
     // every other known field, including exact timestamp values,
     // with one parser arena and 512 bytes of fixed slice scratch. This slower fallback is
     // only used when ordinary byte comparison differs; no second body/document
@@ -144,7 +145,7 @@ class MessageMigration {
         double sourceTime=0,targetTime=0;
         if (!normalized(sourceStore,sourcePath,document,sourceRevision,sourceLength,&sourceTime) ||
             !normalized(targetStore,targetPath,document,targetRevision,targetLength,&targetTime) ||
-            sourceRevision==targetRevision || sourceLength!=targetLength || sourceTime!=targetTime) return false;
+            sourceLength!=targetLength || sourceTime!=targetTime) return false;
         uint8_t sourceBytes[256],targetBytes[256];
         for (size_t offset=0;offset<sourceLength;offset+=sizeof(sourceBytes)) {
             const size_t count=std::min(sizeof(sourceBytes),sourceLength-offset);
@@ -256,6 +257,10 @@ class MessageMigration {
         File file=store.open(path); out={};
         return file && document.parse(file)==Error::None && recordHeader(document.document(),out);
     }
+    // An item that cannot be routed or proven identical stays where it is.
+    static void notImported(const char* path, const char* reason) {
+        Serial.printf("[MSGSTORE] Legacy item not imported (%s): %s\n", reason, path);
+    }
     bool truncated(unsigned which,const char* shortPeer) {
         auto store=medium(which); char directory[128]; snprintf(directory,sizeof(directory),"%s/%s",root(which),shortPeer);
         uint32_t readThrough=0,deleteThrough=0; bool haveRead=false,haveDelete=false;
@@ -264,16 +269,19 @@ class MessageMigration {
         bool sawRecord=false; char after[40]={},name[40];
         while (next(store,directory,after,name,false)) {
             memcpy(after,name,sizeof(after)); if (!messageLike(name)) continue;
-            Name parsed; if (!filename(name,parsed) || (!parsed.canonical && !LEGACY_MSG_FILENAME_MIGRATION)) return false;
             char source[128]; if (!join(directory,name,source)) return false;
+            Name parsed;
+            if (!filename(name,parsed) || (!parsed.canonical && !LEGACY_MSG_FILENAME_MIGRATION)) { notImported(source,"name"); continue; }
             MessageDocument document; StoredRecordHeader record;
-            if (!header(store,source,document,record) || record.incoming!=parsed.incoming) return false;
+            if (!header(store,source,document,record) || record.incoming!=parsed.incoming) { notImported(source,"record"); continue; }
             char fullPeer[33]; encodeHex(parsed.incoming ? record.source : record.destination,16,fullPeer);
-            if (strncmp(fullPeer,shortPeer,16) || (!parsed.canonical && (haveDelete || deleted(fullPeer)))) return false;
+            if (strncmp(fullPeer,shortPeer,16) || (!parsed.canonical && (haveDelete || deleted(fullPeer)))) {
+                notImported(source,"peer"); continue;
+            }
             document.reset(); char targetDir[128],target[128];
             snprintf(targetDir,sizeof(targetDir),"%s/%s",root(which),fullPeer);
             if (!store.mkdir(targetDir) || !join(targetDir,name,target)) return false;
-            if (parsed.canonical && !otherCopy(which,fullPeer,name,source)) return false;
+            if (parsed.canonical && !otherCopy(which,fullPeer,name,source)) { notImported(source,"conflict"); continue; }
             if (haveRead && !mergeMarker(store,targetDir,".read_ctr",false,readThrough)) return false;
             if (haveDelete) {
                 char flashDir[128]; snprintf(flashDir,sizeof(flashDir),"%s/%s",PATH_MESSAGES,fullPeer);
@@ -301,7 +309,9 @@ class MessageMigration {
             if (!store.remove(source)) return false;
             sawRecord=true; yield();
         }
-        if (_scanFailed || (!sawRecord && (haveRead || haveDelete))) return false;
+        // A read-marker-only folder holds no messages; the other medium carries
+        // the same cutoff. Only an unroutable deletion cutoff stays fatal.
+        if (_scanFailed || (!sawRecord && haveDelete)) return false;
         store.rmdir(directory); return true; // Empty remnants are harmless.
     }
     bool filenames(unsigned which,const char* peer) {

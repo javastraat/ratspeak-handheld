@@ -967,6 +967,7 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
         while (nextRecord(cursor, key)) {
             if (key.incoming || (request.key.counter && !less(request.key, key))) continue;
             StoredRecordHeader header; const auto error = load(key, document, header);
+            if (error == Error::InvalidRecord) continue; // No readable copy can be resent.
             if (error != Error::None) { result.error = error; return; }
             if (!messaging::pendingStatus(header.status)) continue;
             if (found) result.more = true;

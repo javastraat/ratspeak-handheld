@@ -32,6 +32,10 @@ public:
     using HistoryDirection = handheld::storage::HistoryDirection;
     static constexpr size_t ConversationPageCapacity = STORAGE_ASYNC_WRITES ? 16 : 64;
     bool begin(FlashStore* flash, SDStore* sd = nullptr, bool externalStorageEnabled = false);
+    // Startup entry: a card that cannot be served falls back to internal storage
+    // for this boot, leaving the card's messages in place for the next boot.
+    enum class BootResult : uint8_t { Ready, InternalOnly, Failed };
+    BootResult beginForBoot(FlashStore* flash, SDStore* sd, bool externalStorageEnabled);
     bool setExternalStorageEnabled(bool enabled);
     bool externalStorageEnabled() const { return _externalStorageEnabled; }
 

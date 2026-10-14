@@ -65,6 +65,13 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
     return _writeQueue.begin(transactions(), STORAGE_DEFERRED_IO ? WriteQueue::Execution::Deferred : WriteQueue::Execution::Immediate);
 }
 
+MessageStore::BootResult MessageStore::beginForBoot(FlashStore* flash, SDStore* sd, bool externalStorageEnabled) {
+    if (begin(flash, sd, externalStorageEnabled)) return BootResult::Ready;
+    if (!externalStorageEnabled || !sd || !sd->isReady() || !begin(flash, sd, false)) return BootResult::Failed;
+    Serial.println("[MSGSTORE] SD messages not loaded; using internal storage for this boot");
+    return BootResult::InternalOnly;
+}
+
 int MessageStore::messageCount(const std::string& peer) const {
     handheld::assertDeviceOwner();
     if (_writeQueue.drainCount()) return 0;
