@@ -23,6 +23,7 @@ public:
     void onExit() override;
     bool handleKey(const KeyEvent&) override;
     bool handleLongPress() override;
+    bool wantsVirtualKeyboard() const override { return _rrc.form(); }
     const char* title() const override { return "Messages"; }
 
 private:

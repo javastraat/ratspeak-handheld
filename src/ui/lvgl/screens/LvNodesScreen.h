@@ -27,6 +27,7 @@ public:
     void setUIManager(class UIManager* ui) { _ui = ui; }
     void setUserConfig(UserConfig* cfg) { _cfg = cfg; }
     bool handleLongPress() override;
+    bool wantsVirtualKeyboard() const override { return _actionState == NodeAction::NICKNAME_INPUT; }
 
     const char* title() const override { return "Peers"; }
 
@@ -88,11 +89,20 @@ private:
     lv_obj_t* _extent = nullptr;
     lv_obj_t* _pressedRow = nullptr;
     std::string _pressedHex;
+    // Set by a touch long-press on a row; checked by the row's CLICKED
+    // branch so the inevitable click-on-release doesn't also open/select —
+    // LVGL does not suppress CLICKED after LONG_PRESSED on its own.
+    bool _longPressFired = false;
     bool _bindingRows = false;
     bool interactionBusy() const;
     void bindRows();
     void focusSelection();
     void scrollToSelection();
+    // Shared by handleLongPress() (encoder/keyboard hold, sources the hex via
+    // getFocusedNodeHex()) and the row's native LV_EVENT_LONG_PRESSED touch
+    // handler (sources the hex via the press-time-pinned _pressedHex, since
+    // these rows don't participate in LVGL click-focus — see bindRows()).
+    bool confirmOrOpenAction(const std::string& nodeHex);
     unsigned long _lastRebuild = 0;
 
     lv_obj_t* _list = nullptr;

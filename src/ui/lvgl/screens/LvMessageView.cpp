@@ -1259,6 +1259,14 @@ void LvMessageView::sendCurrentMessage(bool viaLink) {
     if (id && _ui) _ui->lvStatusBar().showToast("Saving message...", 1000);
 }
 
+bool LvMessageView::composerActive() const {
+    if (_messageTools.visible()) return false;
+    if (_rrcMode && _rrcTools.visible()) return false;
+    if (boundWindow() && _service->historyWindow().mode() == HistoryWindow::Mode::Full) return false;
+    if (_sendOverlay) return false;
+    return true;
+}
+
 bool LvMessageView::handleKey(const KeyEvent& event) {
     const bool deleting=event.del || event.character==0x08;
     if(event.repeat && deleting && _dismissedDelete) return true;

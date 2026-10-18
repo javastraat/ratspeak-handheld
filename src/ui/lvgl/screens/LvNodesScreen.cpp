@@ -155,7 +155,15 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
             if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
                 self->_pressedRow = box;
                 self->_pressedHex = row.hex;
+                self->_longPressFired = false;
+            } else if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) {
+                // These rows don't participate in LVGL click-focus (see the
+                // flags cleared above), so the hex must come from the
+                // press-time pin, not getFocusedNodeHex()/group focus.
+                const auto hex = self->_pressedRow == box ? self->_pressedHex : row.hex;
+                if (!hex.empty() && self->confirmOrOpenAction(hex)) self->_longPressFired = true;
             } else if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+                if (self->_longPressFired) return;  // Already handled by the long-press above.
                 const auto hex = self->_pressedRow == box ? self->_pressedHex : row.hex;
                 if (hex.empty()) return;
                 for (size_t i = 0; i < self->_peers.total(); ++i)
@@ -535,7 +543,11 @@ bool LvNodesScreen::handleLongPress() {
     // On trackball/touch boards, an unfocused hold belongs to the power shell.
     if (!_focusActive) return false;
 #endif
-    std::string nodeHex = getFocusedNodeHex();
+    return confirmOrOpenAction(getFocusedNodeHex());
+}
+
+bool LvNodesScreen::confirmOrOpenAction(const std::string& nodeHex) {
+    if (!_am) return false;
     const DiscoveredNode* node = nodeHex.empty() ? nullptr : _am->findNodeByHex(nodeHex);
     if (!node) return false;
     if (node->saved) {

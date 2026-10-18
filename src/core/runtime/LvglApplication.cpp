@@ -54,6 +54,7 @@
 #include "screens/LvSettingsScreen.h"
 #include "screens/LvHelpOverlay.h"
 #include "screens/LvQrOverlay.h"
+#include "LvVirtualKeyboard.h"
 #include "screens/LvNameInputScreen.h"
 #include "screens/LvTimezoneScreen.h"
 #include "screens/LvDataCleanScreen.h"
@@ -158,6 +159,7 @@ LvMessageView lvMessageView;
 LvSettingsScreen lvSettingsScreen;
 LvHelpOverlay lvHelpOverlay;
 LvQrOverlay lvQrOverlay;
+LvVirtualKeyboard lvVirtualKeyboard;
 LvNameInputScreen lvNameInputScreen;
 LvTimezoneScreen lvTimezoneScreen;
 LvDataCleanScreen lvDataCleanScreen;
@@ -1133,6 +1135,9 @@ void handheld::lvgl_application::setup() {
     // LVGL help overlay
     lvHelpOverlay.create();
     lvQrOverlay.create();
+#if HAS_TOUCH
+    lvVirtualKeyboard.create();
+#endif
 
     // Tab bar callbacks — LVGL
     lvTabScreens[LvTabBar::TAB_HOME]     = &lvHomeScreen;
@@ -1313,6 +1318,8 @@ static void dispatchKey(const KeyEvent& evt) {
         }
     }
 }
+
+void handheld::lvgl_application::injectKeyEvent(const KeyEvent& evt) { dispatchKey(evt); }
 
 // Both input sources use the screen's existing hold action. QR keeps ownership;
 // an unconsumed hold blanks the screen, as the trackball hold always has.
@@ -1498,6 +1505,16 @@ void handheld::lvgl_application::loop() {
         const KeyEvent& evt = inputManager.getKeyEvent();
         dispatchKey(evt);
     }
+
+#if HAS_TOUCH
+    // On-screen keyboard: shown whenever the active screen has a text-entry
+    // sub-state open. Cheap per-tick poll — robust against screens toggling
+    // that state without a full screen transition (no onEnter/onExit).
+    {
+        LvScreen* screen = ::ui.getScreen();
+        lvVirtualKeyboard.setActive(screen && screen->wantsVirtualKeyboard());
+    }
+#endif
 
     handheld::diagnostics::RemoteUiRequest remoteRequest;
     bool remotePending = remoteUi.take(remoteRequest);

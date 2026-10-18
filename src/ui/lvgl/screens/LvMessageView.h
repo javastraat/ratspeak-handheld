@@ -25,6 +25,7 @@ public:
     void onExit() override;
     bool handleKey(const KeyEvent& event) override;
     bool handleLongPress() override;
+    bool wantsVirtualKeyboard() const override { return composerActive(); }
 
     bool setPeerHex(const std::string& hex);
     bool prepareMaintenance() { _rrcSendRequested=false;return leaveRrcDraft(); }
@@ -84,6 +85,13 @@ private:
     void clearMessages();
     bool windowMatches() const;
     bool boundWindow() const;
+    // Mirrors handleKey()'s fallthrough condition for reaching the
+    // printable-character-append branch — i.e. none of the message-tools
+    // menu, RRC-tools menu, full-history reader, or send-mode overlay is
+    // currently intercepting input. Used only for wantsVirtualKeyboard();
+    // handleKey() itself is left untouched to avoid regressing its existing,
+    // carefully-ordered checks.
+    bool composerActive() const;
     void historyAction(unsigned action);
     void readFull(size_t index);
     void goBack();
