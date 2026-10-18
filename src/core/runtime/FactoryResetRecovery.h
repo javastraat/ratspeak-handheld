@@ -16,6 +16,7 @@ void factoryResetRecovery(FlashStore& flash, SDStore& sd, Keyboard& keyboard,
                           Display& display, Restart restart) {
     if (flash.resetState() == FlashStore::ResetState::Clear) return;
     bool confirm = false, paint = true, scopeKnown = false, includesSD = false;
+    bool firstPaint = true;
     const char* detail = "Reset interrupted or unavailable";
     const auto line = [&](int y, const char* text) {
         display.setCursor(10, y); display.print(text);
@@ -41,8 +42,14 @@ void factoryResetRecovery(FlashStore& flash, SDStore& sd, Keyboard& keyboard,
                 line(90, "R: review reset");
             }
             line(112, "X: restart (reset stays pending)");
-            // An event queued before this warning cannot authorize its action.
-            keyboard.discardPending(); paint = false;
+            // Only the very first paint can race a truly stale event queued
+            // before this screen ever appeared (e.g. a leftover boot-time
+            // keypress). Later repaints are themselves caused by the user's
+            // own key press inside this loop (r/b), so discarding there would
+            // also eat a fast, deliberate follow-up press — e.g. a quick
+            // r-then-Enter — before it's ever read.
+            if (firstPaint) { keyboard.discardPending(); firstPaint = false; }
+            paint = false;
         }
         keyboard.update();
         if (keyboard.hasEvent()) {
@@ -59,6 +66,7 @@ void factoryResetRecovery(FlashStore& flash, SDStore& sd, Keyboard& keyboard,
                     display.fillScreen(0x0000); line(53, "Erasing. Keep power connected.");
                     const auto result = performFactoryReset(flash, sd, !scopeKnown);
                     detail = result.detail(); confirm = false; paint = true;
+                    Serial.printf("[RESET] %s\n", detail);
                     if (result.ok()) { display.fillScreen(0x0000); line(53, detail); restart(); }
                 }
             }

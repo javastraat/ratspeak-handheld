@@ -40,7 +40,8 @@
     "runtime": "dedicated",
     "app_environments": [
       "tpager",
-      "tpager_cooperative"
+      "tpager_cooperative",
+      "tpager_lr1121"
     ],
     "device_aliases": [
       "rspager",

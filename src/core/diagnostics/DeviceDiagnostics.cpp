@@ -66,7 +66,7 @@ void DeviceDiagnostics::printDiagnostics() {
                           loraIf->airtimeUtilization() * 100.0f);
         }
         Serial.printf("IQ invert: %s\n", radio.getInvertIQ() ? "ON" : "off");
-#if defined(RSM9)
+#if defined(RSM9) || defined(RSRADIO_LR11X0)
         radio.printDiagnostics();
 #else
         Serial.printf("SyncWord regs: 0x%02X%02X\n",

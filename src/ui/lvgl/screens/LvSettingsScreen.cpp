@@ -413,12 +413,19 @@ void LvSettingsScreen::buildItems() {
         regionItem.type = SettingType::ENUM_CHOICE;
         regionItem.getter = [&s]() {
             int region = constrain(s.radioRegion, 0, REGION_COUNT - 1);
-            return s.loraFrequency == REGION_FREQ[region] ? region : (int)REGION_COUNT;
+            const bool matches = s.loraFrequency == REGION_FREQ[region] &&
+                s.loraBW == REGION_BW[region] && s.loraSF == REGION_SF[region] &&
+                s.loraCR == REGION_CR[region] && s.loraTxPower == REGION_TX_POWER[region];
+            return matches ? region : (int)REGION_COUNT;
         };
         regionItem.setter = [&s](int v) {
             if (v < 0 || v >= REGION_COUNT) return; // Keep the displayed Custom value.
             s.radioRegion = v;
             s.loraFrequency = REGION_FREQ[v];
+            s.loraBW = REGION_BW[v];
+            s.loraSF = REGION_SF[v];
+            s.loraCR = REGION_CR[v];
+            s.loraTxPower = REGION_TX_POWER[v];
         };
         regionItem.minVal = 0; regionItem.maxVal = REGION_COUNT - 1; regionItem.step = 1;
         regionItem.enumLabels = {REGION_LABELS[0], REGION_LABELS[1], REGION_LABELS[2], REGION_LABELS[3], "Custom"};

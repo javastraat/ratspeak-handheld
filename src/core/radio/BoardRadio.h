@@ -6,6 +6,9 @@
 #if defined(RSM9)
 #include "radio/LR1110Radio.h"
 using BoardRadio = LR1110Radio;
+#elif defined(RATPAGER_LR1121)
+#include "radio/LR1121Radio.h"
+using BoardRadio = LR1121Radio;
 #else
 #include "radio/SX1262.h"
 using BoardRadio = SX1262;
