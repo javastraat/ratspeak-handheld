@@ -30,7 +30,7 @@ public:
             cfg.panel_height = DISPLAY_HEIGHT;
             cfg.offset_x = 0;
             cfg.offset_y = 0;
-            cfg.offset_rotation = 1;
+            cfg.offset_rotation = 2;
             _panel.config(cfg);
         }
         {

@@ -29,6 +29,7 @@ TouchInput touch;
 #endif
 
 bool radioOnline = false;
+static uint32_t txCount = 0;
 
 static void drawStatus(const char* line1, const char* line2 = nullptr) {
     auto& gfx = display.gfx();
@@ -41,6 +42,22 @@ static void drawStatus(const char* line1, const char* line2 = nullptr) {
         gfx.setCursor(20, 70);
         gfx.print(line2);
     }
+}
+
+// Manually triggered rather than periodic: TX is unexercised on this board
+// so far (see TODO.md), and a human pressing the one physical button on the
+// unit to fire it keeps airtime bounded during bring-up instead of flooding
+// the band automatically.
+static void sendTestPacket() {
+    if (!radioOnline) { Serial.println("[TX] skipped, radio offline"); return; }
+    char msg[48];
+    const int len = snprintf(msg, sizeof(msg), "D1L TX test #%lu", (unsigned long)(++txCount));
+    radio.beginPacket();
+    radio.write(reinterpret_cast<const uint8_t*>(msg), len);
+    const bool ok = radio.endPacket();  // synchronous: blocks until TX done or timeout
+    Serial.printf("[TX] \"%s\" -> %s\n", msg, ok ? "sent" : "FAILED");
+    drawStatus(radioOnline ? "Radio: ONLINE" : "Radio: FAILED", ok ? "TX sent" : "TX FAILED");
+    radio.receive();
 }
 
 void setup() {
@@ -88,8 +105,10 @@ void setup() {
     Serial.printf("[BOOT] Touch %s\n", touchReady ? "ready" : "not detected");
 #endif
 
+    pinMode(PIN_USER_BTN, INPUT_PULLUP);
+
     drawStatus(radioOnline ? "Radio: ONLINE" : "Radio: FAILED",
-               "Tap screen to test touch");
+               "Button: send test TX");
     Serial.println("[BOOT] Bring-up complete");
 }
 
@@ -103,6 +122,16 @@ void loop() {
     }
     wasTouched = touch.isTouched();
 #endif
+
+    static bool btnWasPressed = false;
+    static uint32_t lastBtnPress = 0;
+    const bool btnPressed = digitalRead(PIN_USER_BTN) == LOW;
+    if (btnPressed && !btnWasPressed && millis() - lastBtnPress > 300) {
+        lastBtnPress = millis();
+        Serial.println("[BTN] pressed, sending test TX packet");
+        sendTestPacket();
+    }
+    btnWasPressed = btnPressed;
 
     if (radioOnline) {
         const int len = radio.parsePacket();
