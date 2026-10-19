@@ -52,6 +52,7 @@
 // --- I2C Bus (shared: IO expander + touch) ---
 #define I2C_SDA              39
 #define I2C_SCL              40
+#define I2C_FREQUENCY        400000
 
 // --- I2C GPIO Expander (TCA9535/PCA9535-family, 16-bit) ---
 // Confirmed via a real I2C bus scan on real hardware in meshcore-dev —

@@ -18,7 +18,11 @@ public:
     static uint32_t expanderPin(uint8_t bit) { return EXPANDER_FLAG | bit; }
 
     SensecapRadioHal(SPIClass& spi, IOExpander& expander)
-        : ArduinoHal(spi, SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0)), _expander(expander) {}
+        : ArduinoHal(spi, SPISettings(SPI_FREQUENCY, MSBFIRST, SPI_MODE0)), _expander(expander) {
+        // TCA9535-family INT output is open-drain, active-low — needs a
+        // pull-up to read HIGH when idle.
+        ::pinMode(IO_EXPANDER_IRQ, INPUT_PULLUP);
+    }
 
     void pinMode(uint32_t pin, uint32_t mode) override {
         if (isExpanderPin(pin)) { _expander.pinMode(expanderBit(pin), mode); return; }
@@ -32,25 +36,67 @@ public:
         if (isExpanderPin(pin)) return _expander.digitalRead(expanderBit(pin));
         return ArduinoHal::digitalRead(pin);
     }
-    // The expander's single IRQ line is shared across all of its inputs,
-    // not just the radio's DIO1 — redirect to the one real physical pin.
-    // The ISR fires on any watched input changing; if the trigger wasn't
-    // really DIO1, RadioLib's own follow-up SPI status read harmlessly
-    // finds nothing; one redundant check, not a correctness problem.
+    // The expander's single IRQ line is shared across all of its inputs —
+    // critically including BUSY, which RadioLib's SPI layer polls
+    // constantly — so it fires far more often than real DIO1 events.
+    // Calling RadioLib's real packet-received callback directly from the
+    // ISR on every trigger (the obvious-looking approach, and what this
+    // used to do) lets RadioLib's SPI follow-up read land in the middle of
+    // the chip actively writing a real received packet, corrupting it —
+    // confirmed on this exact hardware, independently, in meshcore-dev's
+    // own port (its IndicatorRadioHal.h/.cpp): real adverts from another
+    // device were never received despite TX working and the shared IRQ
+    // line firing constantly. Fix, same shape as that confirmed-working
+    // reference: the ISR only sets a pending flag; pollIrq() — called from
+    // the main loop, not ISR context — checks DIO1 specifically over I2C
+    // before invoking the real callback, filtering out BUSY-only noise.
     void attachInterrupt(uint32_t interruptNum, void (*cb)(void), uint32_t mode) override {
-        ArduinoHal::attachInterrupt(isExpanderPin(interruptNum) ? IO_EXPANDER_IRQ : interruptNum, cb, mode);
+        if (isExpanderPin(interruptNum)) {
+            s_callback = cb;
+            s_dio1Bit = expanderBit(interruptNum);
+            // FALLING, not `mode`: `mode` describes DIO1's own polarity
+            // (active-high per RadioLib's own request), but the real signal
+            // attached to here is the expander's open-drain active-low INT
+            // line — a different, unrelated electrical signal.
+            ::attachInterrupt(digitalPinToInterrupt(IO_EXPANDER_IRQ), isrTrampoline, FALLING);
+            return;
+        }
+        ArduinoHal::attachInterrupt(interruptNum, cb, mode);
     }
     void detachInterrupt(uint32_t interruptNum) override {
-        ArduinoHal::detachInterrupt(isExpanderPin(interruptNum) ? IO_EXPANDER_IRQ : interruptNum);
+        if (isExpanderPin(interruptNum)) {
+            ::detachInterrupt(digitalPinToInterrupt(IO_EXPANDER_IRQ));
+            s_callback = nullptr;
+            return;
+        }
+        ArduinoHal::detachInterrupt(interruptNum);
     }
     uint32_t pinToInterrupt(uint32_t pin) override {
-        return isExpanderPin(pin) ? IO_EXPANDER_IRQ : ArduinoHal::pinToInterrupt(pin);
+        // Passed through unchanged (still expander-flagged) — interpreted
+        // by attachInterrupt/detachInterrupt above, not by the real
+        // digitalPinToInterrupt(), which doesn't know about this pin at all.
+        return isExpanderPin(pin) ? pin : ArduinoHal::pinToInterrupt(pin);
+    }
+
+    // Call frequently from the main loop (not ISR context) — see the
+    // attachInterrupt() comment above for why this exists.
+    void pollIrq() {
+        if (!s_pending) return;
+        s_pending = false;
+        if (s_callback && _expander.digitalRead(s_dio1Bit) == HIGH) s_callback();
     }
 
 private:
     static bool isExpanderPin(uint32_t pin) { return (pin & EXPANDER_FLAG) != 0; }
     static uint8_t expanderBit(uint32_t pin) { return uint8_t(pin & 0xFF); }
+    static void IRAM_ATTR isrTrampoline();
+
     IOExpander& _expander;
+    // Only one thing is ever attached through this shared line in
+    // practice (DIO1) — a single static slot is enough.
+    static void (*s_callback)(void);
+    static uint8_t s_dio1Bit;
+    static volatile bool s_pending;
 };
 
 // Raw physical frames only. LoRaInterface remains the sole RNode-framing,
@@ -95,6 +141,8 @@ public:
     bool lowDataRateEnabled() const;
     void standby();
     void sleep();
+    // Call frequently from the main loop — see SensecapRadioHal::pollIrq().
+    void pollIrq() { _hal.pollIrq(); }
     using YieldCallback = void(*)();
     void setYieldCallback(YieldCallback cb) { _yield = cb; }
     void printDiagnostics();

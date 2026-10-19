@@ -2,6 +2,11 @@
 #if defined(RSSENSECAPD1L)
 #include <cstring>
 
+void (*SensecapRadioHal::s_callback)(void) = nullptr;
+uint8_t SensecapRadioHal::s_dio1Bit = 0;
+volatile bool SensecapRadioHal::s_pending = false;
+void IRAM_ATTR SensecapRadioHal::isrTrampoline() { s_pending = true; }
+
 SensecapSX1262Radio* SensecapSX1262Radio::_instance = nullptr;
 SensecapSX1262Radio::SensecapSX1262Radio(SPIClass* spi, IOExpander* expander)
     : _hal(*spi, *expander),

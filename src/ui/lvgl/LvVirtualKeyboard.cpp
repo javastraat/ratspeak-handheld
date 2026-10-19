@@ -1,6 +1,7 @@
 #include "LvVirtualKeyboard.h"
 #include "input/KeyEvent.h"
 #include "runtime/LvglApplication.h"
+#include "Theme.h"
 #include <cstring>
 
 void LvVirtualKeyboard::create() {
@@ -8,6 +9,21 @@ void LvVirtualKeyboard::create() {
     lv_obj_align(_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(_kb, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(_kb, onValueChanged, LV_EVENT_VALUE_CHANGED, this);
+
+    // No LVGL theme engine is active anywhere in this app (every screen
+    // styles its own objects directly against Theme::*) — lv_keyboard_create
+    // is no exception, so without this it renders fully unstyled.
+    lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::BG_SURFACE), 0);
+    lv_obj_set_style_border_color(_kb, lv_color_hex(Theme::BORDER), 0);
+    lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::BG_ELEVATED), LV_PART_ITEMS);
+    lv_obj_set_style_border_color(_kb, lv_color_hex(Theme::BORDER), LV_PART_ITEMS);
+    lv_obj_set_style_text_color(_kb, lv_color_hex(Theme::TEXT_PRIMARY), LV_PART_ITEMS);
+    // LV_FONT_DEFAULT is this app's own custom font (lv_font_rsdeck_14),
+    // which doesn't carry LVGL's symbol glyph range — Enter/Backspace/etc.
+    // render as tofu boxes without an explicit font that does.
+    lv_obj_set_style_text_font(_kb, &lv_font_montserrat_16, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::PRIMARY_MUTED), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::BG_HOVER), LV_PART_ITEMS | LV_STATE_CHECKED);
 }
 
 void LvVirtualKeyboard::setActive(bool wanted) {
