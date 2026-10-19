@@ -70,7 +70,13 @@ private:
     lv_obj_t* _nicknameBox = nullptr;
     lv_obj_t* _nicknameLbl = nullptr;
     lv_obj_t* _nicknameHint = nullptr;
-    static constexpr int RowHeight = 36;
+    // Square/tall panels (today: SenseCAP D1L) have room for the same
+    // per-row identicon Contacts already shows; kRowH/kTextX match
+    // LvContactsScreen's kContactRowH/kContactTextX exactly for visual
+    // consistency between the two lists.
+    static constexpr bool kShowAvatar = Theme::SCREEN_W >= 400 && Theme::SCREEN_H >= 400;
+    static constexpr int RowHeight = kShowAvatar ? 38 : 36;
+    static constexpr int TextX = kShowAvatar ? 48 : 8;
     static constexpr int ViewportHeight = Theme::CONTENT_H - 19;
     // Partial first/last rows, one overscan each side, and one pinned press.
     static constexpr size_t RowPoolSize = (ViewportHeight + RowHeight - 1) / RowHeight + 4;
@@ -80,11 +86,15 @@ private:
         lv_obj_t* name = nullptr;
         lv_obj_t* meta = nullptr;
         lv_obj_t* id = nullptr;
+        lv_obj_t* avatar = nullptr;  // Only created when kShowAvatar.
         std::string nameText;
         std::string hex;
         size_t index = 0;
     };
     std::array<Row, RowPoolSize> _rows;
+    // One persistent render buffer per row slot (not per-peer, since rows
+    // are a recycled/virtualized pool — see bindRows()).
+    std::array<std::vector<uint8_t>, RowPoolSize> _avatarBuffers;
     lv_obj_t* _caption = nullptr;
     lv_obj_t* _extent = nullptr;
     lv_obj_t* _pressedRow = nullptr;

@@ -25,7 +25,12 @@ public:
     void onExit() override;
     bool handleKey(const KeyEvent& event) override;
     bool handleLongPress() override;
-    bool wantsVirtualKeyboard() const override { return composerActive(); }
+    // composerActive() alone is true by default (whenever no other overlay
+    // is open) — it answers "is the composer the active surface", not "is
+    // the user actually typing in it". Gate on textarea focus too, so the
+    // keyboard appears on tapping the field, not immediately on entering
+    // any chat — see the _textarea focus/defocus handler in createUI().
+    bool wantsVirtualKeyboard() const override { return composerActive() && _textareaFocused; }
 
     bool setPeerHex(const std::string& hex);
     bool prepareMaintenance() { _rrcSendRequested=false;return leaveRrcDraft(); }
@@ -159,6 +164,13 @@ private:
     lv_obj_t* _queuedAudio = nullptr;
     bool _touchScrolling = false;
     int32_t _touchScrollStart = 0, _touchScrollPeak = 0;
+    // Reserves room for the on-screen keyboard (HAS_TOUCH only) — see
+    // refreshUI(). Without this the keyboard, drawn on lv_layer_top()
+    // outside this screen's own flex layout entirely, simply overlaps the
+    // bottom of _msgScroll/_inputRow instead of the history shrinking to
+    // make room above it.
+    bool _kbSpaceReserved = false;
+    bool _textareaFocused = false;
     unsigned _noticeAction = 3;
     lv_obj_t* _inputRow = nullptr;
     lv_obj_t* _textarea = nullptr;
