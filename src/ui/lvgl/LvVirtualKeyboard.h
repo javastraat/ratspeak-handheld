@@ -13,6 +13,9 @@
 class LvVirtualKeyboard {
 public:
     void create();
+    // Re-applies styling against the current Theme::* values — call after
+    // any light/dark scheme switch (see UIManager::applyTheme()'s callers).
+    void applyTheme();
     // Called once per loop tick with the active screen's
     // LvScreen::wantsVirtualKeyboard(). Auto-shows on a false->true edge;
     // stays hidden if the user dismissed it via the keyboard's own close

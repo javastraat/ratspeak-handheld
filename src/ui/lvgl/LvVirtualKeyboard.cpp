@@ -9,10 +9,18 @@ void LvVirtualKeyboard::create() {
     lv_obj_align(_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_add_flag(_kb, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(_kb, onValueChanged, LV_EVENT_VALUE_CHANGED, this);
+    applyTheme();
+}
 
+void LvVirtualKeyboard::applyTheme() {
+    if (!_kb) return;
     // No LVGL theme engine is active anywhere in this app (every screen
     // styles its own objects directly against Theme::*) — lv_keyboard_create
-    // is no exception, so without this it renders fully unstyled.
+    // is no exception, so without this it renders fully unstyled. Colors are
+    // re-applied here (not just once in create()) because Theme::* values
+    // change live when the user switches light/dark in Settings — without a
+    // re-apply hook the keyboard would keep whichever scheme was active at
+    // boot, going low-contrast or invisible after a later theme switch.
     lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::BG_SURFACE), 0);
     lv_obj_set_style_border_color(_kb, lv_color_hex(Theme::BORDER), 0);
     lv_obj_set_style_bg_color(_kb, lv_color_hex(Theme::BG_ELEVATED), LV_PART_ITEMS);

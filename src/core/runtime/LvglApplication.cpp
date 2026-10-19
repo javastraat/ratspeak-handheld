@@ -786,7 +786,7 @@ void handheld::lvgl_application::setup() {
     // An SD recovery on first boot may supply the palette; re-sync it.
     {
         Theme::Scheme want = userConfig.settings().themeLight ? Theme::Scheme::LIGHT : Theme::Scheme::DARK;
-        if (want != Theme::scheme()) { Theme::setScheme(want); ::ui.applyTheme(); }
+        if (want != Theme::scheme()) { Theme::setScheme(want); ::ui.applyTheme(); lvVirtualKeyboard.applyTheme(); }
     }
 #if HAS_TRACKBALL
     inputManager.setTrackballSpeed(userConfig.settings().trackballSpeed);
@@ -1196,6 +1196,7 @@ void handheld::lvgl_application::setup() {
     lvSettingsScreen.setShowQrCallback(showQr);
     lvSettingsScreen.setShowHelpCallback(onHotkeyHelp);
     lvContactsScreen.setShowQrCallback(showQr);
+    lvHomeScreen.setShowQrCallback(showQr);
 
     // LVGL help overlay
     lvHelpOverlay.create();
@@ -1316,7 +1317,7 @@ void handheld::lvgl_application::setup() {
 static void applyUiSettings() {
     const auto& s = serviceClient.config.settings();
     const auto scheme = s.themeLight ? Theme::Scheme::LIGHT : Theme::Scheme::DARK;
-    if (scheme != Theme::scheme()) { Theme::setScheme(scheme); ::ui.applyTheme(); }
+    if (scheme != Theme::scheme()) { Theme::setScheme(scheme); ::ui.applyTheme(); lvVirtualKeyboard.applyTheme(); }
     powerMgr.setBrightness(s.brightness);
     powerMgr.setDimTimeout(s.screenDimTimeout);
     powerMgr.setOffTimeout(s.screenOffTimeout);
