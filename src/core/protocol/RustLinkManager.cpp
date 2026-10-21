@@ -496,11 +496,15 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
         credit();
         l.state = State::Active;
         Serial.println("[RUST-LINK] responder link ACTIVE (LRRTT received)");
-        if (l.owner == Owner::Voice && _voiceSink)
-            _voiceSink->onVoiceLink(handle(l), true, l.iface, l.hops);
+        if (l.owner == Owner::Voice && _voiceSink) {
+            const auto h = handle(l);
+            _voiceSink->onVoiceLink(h, true, l.iface, l.hops);
+            if (voiceIdentified(h)) _voiceSink->onVoiceIdentity(h, l.pubkey);
+        }
         return;
     }
     if (f.context == RustWire::CTX_KEEPALIVE) {
+        // Link.py holds the echo until LRRTT: LRPROOF counts as outbound and the interval is still 360 s.
         if ((l.state != State::Active && l.state != State::Stale) || f.payload_len != 1 ||
             f.payload[0] != (l.initiator ? 0xFE : 0xFF)) return;
         credit();
@@ -521,9 +525,12 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
         }
         return;
     }
-    if (l.state != State::Active && l.state != State::Stale) return;
+    // Link.py receive() refuses only a closed Link: an initiator turns Active on
+    // the proof and may identify or send before its LRRTT reaches this responder.
+    const bool established = l.state == State::Active || l.state == State::Stale;
+    if (!established && l.state != State::RespPending) return;
     if (l.owner == Owner::Voice) {
-        if ((l.state != State::Active && l.state != State::Stale) || !_voiceSink) return;
+        if (!_voiceSink) return;
         if (f.context == RustWire::CTX_LINKIDENTIFY && !l.initiator && !l.identified) {
             uint8_t plaintext[128], publicKey[64]; size_t length = 0;
             if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len,
@@ -532,9 +539,10 @@ void RustLinkManager::onLinkData(Link& l, const rs_handheld_local_frame_t& f) {
                 credit();
                 memcpy(l.pubkey, publicKey, sizeof l.pubkey);
                 l.identified = true; // install before callback: a repeated identity cannot replace it
-                _voiceSink->onVoiceIdentity(handle(l), l.pubkey);
+                // The sink learns of a voice Link at LRRTT; an earlier identity follows it there.
+                if (established) _voiceSink->onVoiceIdentity(handle(l), l.pubkey);
             }
-        } else if (f.context == RustWire::CTX_NONE && (l.initiator || l.identified)) {
+        } else if (established && f.context == RustWire::CTX_NONE && (l.initiator || l.identified)) {
             uint8_t plaintext[RS_HANDHELD_LINK_MDU]; size_t length = 0;
             if (rs_handheld_rns_link_decrypt(l.sessionKey, f.payload, f.payload_len,
                     plaintext, sizeof plaintext, &length) == RS_HANDHELD_OK) {
