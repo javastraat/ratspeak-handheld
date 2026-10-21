@@ -21,9 +21,15 @@ unsigned long nodeAgeMs(const DiscoveredNode& node, unsigned long now) {
 }
 
 std::string displayNameFor(const DiscoveredNode& node) {
-    if (!node.name.empty()) return node.name;
+    // "@", not a star -- same reasoning as LvNodesScreen's Peers list:
+    // nomadFavorite only means "this peer has a bookmarked NomadNet page",
+    // and a star here (no Nomad-browsing context on screen) would misread
+    // as a general favorite-contact marker. Same stand-in already used
+    // for "address/web" on the Nomad Browser's own address-bar toggle.
+    const char* prefix = node.nomadFavorite ? "@ " : "";
+    if (!node.name.empty()) return prefix + node.name;
     std::string hex = node.hash.toHex();
-    return hex.substr(0, 12);
+    return prefix + hex.substr(0, 12);
 }
 
 std::string identityLineFor(const DiscoveredNode& node) {

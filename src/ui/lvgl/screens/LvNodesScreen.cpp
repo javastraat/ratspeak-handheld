@@ -1,4 +1,7 @@
 #include "LvNodesScreen.h"
+#if defined(RSSENSECAPD1L)
+#include "LvNomadBrowserScreen.h"
+#endif
 #include "Theme.h"
 #include "LvTheme.h"
 #include "LvInput.h"
@@ -22,9 +25,19 @@ unsigned long nodeAgeMs(const DiscoveredNode& node, unsigned long now) {
 }
 
 std::string displayNameFor(const DiscoveredNode& node) {
-    if (!node.name.empty()) return node.name;
+    // "@", not a star -- this list has no Nomad-browsing context on
+    // screen, so a star here would read as "I like this contact"
+    // generally rather than "this peer has a bookmarked NomadNet page",
+    // which is all nomadFavorite actually means. Same stand-in already
+    // used for "address/web" on the Nomad Browser's own address-bar
+    // toggle button, so it stays consistent with this app's existing
+    // icon vocabulary. The star stays reserved for the in-context toggle
+    // inside the Nomad Browser itself (LvNomadBrowserScreen.cpp), where
+    // the surrounding UI already makes the meaning unambiguous.
+    const char* prefix = node.nomadFavorite ? "@ " : "";
+    if (!node.name.empty()) return prefix + node.name;
     std::string hex = node.hash.toHex();
-    return hex.substr(0, 12);
+    return prefix + hex.substr(0, 12);
 }
 
 std::string identityLineFor(const DiscoveredNode& node) {
@@ -201,9 +214,13 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
         lv_label_set_long_mode(row.id, LV_LABEL_LONG_CLIP);
     }
     // --- Action modal overlay (on top layer, centered) ---
+    // Sized generously (not the original 260x158) -- D1L is a 480x480 touch-only
+    // panel with room to spare, and squeezing 4 menu rows into the old size is
+    // what caused the close-button overlap bug fixed below.
+    constexpr int kOverlayW = 340, kOverlayH = 270, kOverlayInnerW = kOverlayW - 24;
     _overlay = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(_overlay, 260, 158);
-    lv_obj_set_pos(_overlay, (Theme::SCREEN_W - 260) / 2, Theme::STATUS_BAR_H + (Theme::CONTENT_H - 158) / 2);
+    lv_obj_set_size(_overlay, kOverlayW, kOverlayH);
+    lv_obj_set_pos(_overlay, (Theme::SCREEN_W - kOverlayW) / 2, Theme::STATUS_BAR_H + (Theme::CONTENT_H - kOverlayH) / 2);
     lv_obj_add_style(_overlay, LvTheme::styleModal(), 0);
     lv_obj_set_style_pad_all(_overlay, 0, 0);
     lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -213,28 +230,32 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
     lv_obj_set_style_text_font(_overlayTitle, &lv_font_rsdeck_14, 0);
     lv_obj_set_style_text_color(_overlayTitle, lv_color_hex(Theme::ACCENT), 0);
     lv_label_set_long_mode(_overlayTitle, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(_overlayTitle, 236);
-    lv_obj_set_pos(_overlayTitle, 12, 9);
+    lv_obj_set_width(_overlayTitle, kOverlayInnerW);
+    lv_obj_set_pos(_overlayTitle, 12, 12);
 
     _overlayMeta = lv_label_create(_overlay);
     lv_obj_set_style_text_font(_overlayMeta, &lv_font_rsdeck_10, 0);
     lv_obj_set_style_text_color(_overlayMeta, lv_color_hex(Theme::TEXT_MUTED), 0);
     lv_label_set_long_mode(_overlayMeta, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(_overlayMeta, 236);
-    lv_obj_set_pos(_overlayMeta, 12, 29);
+    lv_obj_set_width(_overlayMeta, kOverlayInnerW);
+    lv_obj_set_pos(_overlayMeta, 12, 34);
 
     _overlayReach = lv_label_create(_overlay);
     lv_obj_set_style_text_font(_overlayReach, &lv_font_rsdeck_10, 0);
     lv_obj_set_style_text_color(_overlayReach, lv_color_hex(Theme::TEXT_SECONDARY), 0);
     lv_label_set_long_mode(_overlayReach, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(_overlayReach, 236);
-    lv_obj_set_pos(_overlayReach, 12, 43);
+    lv_obj_set_width(_overlayReach, kOverlayInnerW);
+    lv_obj_set_pos(_overlayReach, 12, 50);
 
+#if defined(RSSENSECAPD1L)
+    const char* menuText[] = {"Save Contact", "Message", "Nomad Browser", "Close"};
+#else
     const char* menuText[] = {"Save Contact", "Message", "Close"};
-    for (int i = 0; i < 3; i++) {
+#endif
+    for (int i = 0; i < kMenuCount; i++) {
         lv_obj_t* btn = lv_obj_create(_overlay);
-        lv_obj_set_size(btn, 236, 24);
-        lv_obj_set_pos(btn, 12, 63 + i * 27);
+        lv_obj_set_size(btn, kOverlayInnerW, 34);
+        lv_obj_set_pos(btn, 12, 78 + i * 40);
         lv_obj_set_style_bg_color(btn, lv_color_hex(Theme::BG_SURFACE), 0);
         lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(btn, lv_color_hex(Theme::BORDER), 0);
@@ -264,8 +285,8 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
 
     // Nickname input widgets
     _nicknameBox = lv_obj_create(_overlay);
-    lv_obj_set_size(_nicknameBox, 236, 86);
-    lv_obj_set_pos(_nicknameBox, 12, 63);
+    lv_obj_set_size(_nicknameBox, kOverlayInnerW, 140);
+    lv_obj_set_pos(_nicknameBox, 12, 78);
     lv_obj_set_style_bg_opa(_nicknameBox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_nicknameBox, 0, 0);
     lv_obj_set_style_pad_all(_nicknameBox, 0, 0);
@@ -282,9 +303,9 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
     lv_obj_set_style_text_font(_nicknameLbl, &lv_font_rsdeck_14, 0);
     lv_obj_set_style_text_color(_nicknameLbl, lv_color_hex(Theme::PRIMARY), 0);
     lv_label_set_long_mode(_nicknameLbl, LV_LABEL_LONG_CLIP);
-    lv_obj_set_width(_nicknameLbl, 232);
+    lv_obj_set_width(_nicknameLbl, kOverlayInnerW);
     lv_label_set_text(_nicknameLbl, "_");
-    lv_obj_set_pos(_nicknameLbl, 0, 22);
+    lv_obj_set_pos(_nicknameLbl, 0, 26);
 
     _nicknameHint = lv_label_create(_nicknameBox);
     lv_obj_set_style_text_font(_nicknameHint, &lv_font_rsdeck_10, 0);
@@ -294,15 +315,15 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
 #else
     lv_label_set_text(_nicknameHint, "Enter saves / Alt+Back cancels");
 #endif
-    lv_obj_set_pos(_nicknameHint, 0, 46);
+    lv_obj_set_pos(_nicknameHint, 0, 54);
 
     lv_obj_t* cancel = lv_btn_create(_nicknameBox);
     // Nickname keys are handled by the screen; this button is a touch action.
     // Leaving a hidden default-group button behind during a row rebuild can
     // strand the group's focus and prevent keypad/encoder input reaching peers.
     lv_group_remove_obj(cancel);
-    lv_obj_set_pos(cancel, 154, 61);
-    lv_obj_set_size(cancel, 80, 22);
+    lv_obj_set_pos(cancel, kOverlayInnerW - 90, 90);
+    lv_obj_set_size(cancel, 90, 30);
     lv_obj_add_style(cancel, LvTheme::styleBtn(), 0);
     lv_obj_add_style(cancel, LvTheme::styleBtnPressed(), LV_STATE_PRESSED);
     lv_obj_add_event_cb(cancel, [](lv_event_t* e) {
@@ -313,13 +334,65 @@ void LvNodesScreen::createUI(lv_obj_t* parent) {
     lv_obj_set_style_text_font(cancelLabel, &lv_font_rsdeck_10, 0);
     lv_label_set_text(cancelLabel, "Cancel");
     lv_obj_center(cancelLabel);
+
+#if HAS_TOUCH
+    // Delete-confirmation widgets: touch-only boards have no physical
+    // Enter/Backspace, so this needs tappable buttons, not just a status toast.
+    _confirmBox = lv_obj_create(_overlay);
+    lv_obj_set_size(_confirmBox, kOverlayInnerW, 140);
+    lv_obj_set_pos(_confirmBox, 12, 78);
+    lv_obj_set_style_bg_opa(_confirmBox, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(_confirmBox, 0, 0);
+    lv_obj_set_style_pad_all(_confirmBox, 0, 0);
+    lv_obj_clear_flag(_confirmBox, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(_confirmBox, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* confirmHint = lv_label_create(_confirmBox);
+    lv_obj_set_style_text_font(confirmHint, &lv_font_rsdeck_10, 0);
+    lv_obj_set_style_text_color(confirmHint, lv_color_hex(Theme::TEXT_MUTED), 0);
+    lv_label_set_long_mode(confirmHint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(confirmHint, kOverlayInnerW);
+    lv_label_set_text(confirmHint, "Remove this saved contact?");
+    lv_obj_set_pos(confirmHint, 0, 0);
+
+    lv_obj_t* deleteBtn = lv_btn_create(_confirmBox);
+    lv_group_remove_obj(deleteBtn);
+    lv_obj_set_pos(deleteBtn, 0, 50);
+    lv_obj_set_size(deleteBtn, (kOverlayInnerW - 10) / 2, 34);
+    lv_obj_add_style(deleteBtn, LvTheme::styleBtn(), 0);
+    lv_obj_add_style(deleteBtn, LvTheme::styleBtnPressed(), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(deleteBtn, lv_color_hex(Theme::ERROR_CLR), 0);
+    lv_obj_add_event_cb(deleteBtn, [](lv_event_t* e) {
+        static_cast<LvNodesScreen*>(lv_event_get_user_data(e))->finishConfirmDelete(true);
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* deleteLabel = lv_label_create(deleteBtn);
+    lv_obj_set_style_text_font(deleteLabel, &lv_font_rsdeck_10, 0);
+    lv_obj_set_style_text_color(deleteLabel, lv_color_hex(Theme::ERROR_CLR), 0);
+    lv_label_set_text(deleteLabel, "Delete");
+    lv_obj_center(deleteLabel);
+
+    lv_obj_t* keepBtn = lv_btn_create(_confirmBox);
+    lv_group_remove_obj(keepBtn);
+    lv_obj_set_pos(keepBtn, (kOverlayInnerW - 10) / 2 + 10, 50);
+    lv_obj_set_size(keepBtn, (kOverlayInnerW - 10) / 2, 34);
+    lv_obj_add_style(keepBtn, LvTheme::styleBtn(), 0);
+    lv_obj_add_style(keepBtn, LvTheme::styleBtnPressed(), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(keepBtn, [](lv_event_t* e) {
+        static_cast<LvNodesScreen*>(lv_event_get_user_data(e))->finishConfirmDelete(false);
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_t* keepLabel = lv_label_create(keepBtn);
+    lv_obj_set_style_text_font(keepLabel, &lv_font_rsdeck_10, 0);
+    lv_label_set_text(keepLabel, "Keep");
+    lv_obj_center(keepLabel);
+#endif
 }
 
 void LvNodesScreen::destroyUI() {
     if (_overlay) { lv_obj_del(_overlay); _overlay = nullptr; }
-    for (int i = 0; i < 3; i++) { _menuBtns[i] = nullptr; _menuLabels[i] = nullptr; }
+    for (int i = 0; i < kMenuCount; i++) { _menuBtns[i] = nullptr; _menuLabels[i] = nullptr; }
     _overlayTitle = nullptr; _overlayMeta = nullptr; _overlayReach = nullptr;
     _nicknameBox = nullptr; _nicknameLbl = nullptr; _nicknameHint = nullptr;
+    _confirmBox = nullptr;
     _list = nullptr; _emptyState = nullptr; _caption = nullptr;
     _extent = nullptr; _pressedRow = nullptr; _pressedHex.clear();
     _rows = {}; _peers.reset();
@@ -492,11 +565,21 @@ void LvNodesScreen::showActionMenu(const std::string& nodeHex) {
         if (node) {
             lv_label_set_text(_menuLabels[0], node->saved ? "Edit Name" : "Save Contact");
             lv_label_set_text(_menuLabels[1], "Message");
+#if defined(RSSENSECAPD1L)
+            lv_label_set_text(_menuLabels[2], "Nomad Browser");
+            lv_label_set_text(_menuLabels[3], "Close");
+#else
             lv_label_set_text(_menuLabels[2], "Close");
+#endif
         }
         updateOverlayDetails(nullptr);
-        for (int i = 0; i < 3; i++) lv_obj_clear_flag(_menuBtns[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_overlayMeta, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(_overlayReach, LV_OBJ_FLAG_HIDDEN);
+        for (int i = 0; i < kMenuCount; i++) lv_obj_clear_flag(_menuBtns[i], LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(_nicknameBox, LV_OBJ_FLAG_HIDDEN);
+#if HAS_TOUCH
+        lv_obj_add_flag(_confirmBox, LV_OBJ_FLAG_HIDDEN);
+#endif
         lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
         updateMenuSelection();
     }
@@ -506,6 +589,7 @@ void LvNodesScreen::hideOverlay() {
     _actionState = NodeAction::BROWSE;
     _actionNodeHex.clear();
     _nicknameText = "";
+    if (_confirmBox) lv_obj_add_flag(_confirmBox, LV_OBJ_FLAG_HIDDEN);
     if (_overlay) lv_obj_add_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -516,13 +600,36 @@ void LvNodesScreen::showNicknameInput() {
         _nicknameText = String(node->name.c_str());
     }
     updateOverlayDetails("Set contact name");
-    for (int i = 0; i < 3; i++) lv_obj_add_flag(_menuBtns[i], LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < kMenuCount; i++) lv_obj_add_flag(_menuBtns[i], LV_OBJ_FLAG_HIDDEN);
+#if HAS_TOUCH
+    lv_obj_add_flag(_confirmBox, LV_OBJ_FLAG_HIDDEN);
+#endif
     lv_obj_clear_flag(_nicknameBox, LV_OBJ_FLAG_HIDDEN);
     updateNicknameDisplay();
 }
 
+#if defined(RSSENSECAPD1L)
+void LvNodesScreen::openNomadBrowserScreen() {
+    if (!_nomadScreen || !_ui || _actionNodeHex.empty()) { hideOverlay(); return; }
+    const std::string hex = _actionNodeHex;
+    const std::string name = _am ? _am->lookupName(hex) : std::string();
+    hideOverlay();
+    _nomadScreen->openFor(hex, name);
+    // setActiveTabDisplay(), not setActiveTab() -- the latter also runs the
+    // Nomad tab's own change-callback (LvglApplication.cpp's enterTab()),
+    // which calls openHome() and would immediately clear the _peerHex just
+    // set above, landing on the favorites home state instead of actually
+    // browsing this peer (confirmed: this is exactly what happened before
+    // this fix). Without updating the display at all, the tab bar would
+    // keep showing "Peers" highlighted while Nomad Browser's content is
+    // actually on screen.
+    _ui->lvTabBar().setActiveTabDisplay(LvTabBar::TAB_NOMAD);
+    _ui->setScreen(_nomadScreen);
+}
+#endif
+
 void LvNodesScreen::updateMenuSelection() {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < kMenuCount; i++) {
         bool sel = (i == _menuIdx);
         lv_obj_set_style_text_color(_menuLabels[i], lv_color_hex(
             sel ? Theme::ACCENT : Theme::TEXT_SECONDARY), 0);
@@ -560,13 +667,44 @@ bool LvNodesScreen::confirmOrOpenAction(const std::string& nodeHex) {
     const DiscoveredNode* node = nodeHex.empty() ? nullptr : _am->findNodeByHex(nodeHex);
     if (!node) return false;
     if (node->saved) {
-        _confirmDelete = true;
-        _actionNodeHex = nodeHex;
-        if (_ui) _ui->lvStatusBar().showToast("Remove? Enter=Remove Backspace=Keep", 5000);
+        showConfirmDelete(nodeHex);
     } else {
         showActionMenu(nodeHex);
     }
     return true;
+}
+
+void LvNodesScreen::showConfirmDelete(const std::string& nodeHex) {
+    _confirmDelete = true;
+    _actionNodeHex = nodeHex;
+#if HAS_TOUCH
+    _nicknameText = "";
+    if (!_overlay) return;
+    updateOverlayDetails("Remove contact?");
+    lv_obj_clear_flag(_overlayMeta, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_overlayReach, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < kMenuCount; i++) lv_obj_add_flag(_menuBtns[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(_nicknameBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_confirmBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(_overlay, LV_OBJ_FLAG_HIDDEN);
+#else
+    // No touch indev to tap Delete/Keep on this board -- the physical
+    // Enter/any-key path in handleKey() is still the only way to answer.
+    if (_ui) _ui->lvStatusBar().showToast("Remove? Enter=Remove Backspace=Keep", 5000);
+#endif
+}
+
+void LvNodesScreen::finishConfirmDelete(bool remove) {
+    _confirmDelete = false;
+    if (remove) {
+        bool removed = !_actionNodeHex.empty() && _am && _am->deleteContactByHex(_actionNodeHex);
+        if (_ui) _ui->lvStatusBar().showToast(
+            removed ? "Removing contact..." : "Contact action unavailable", 1200);
+    } else if (_ui) {
+        _ui->lvStatusBar().showToast("Kept contact", 800);
+    }
+    hideOverlay();
+    rebuildList();
 }
 
 bool LvNodesScreen::handleKey(const KeyEvent& event) {
@@ -627,7 +765,7 @@ bool LvNodesScreen::handleKey(const KeyEvent& event) {
             return true;
         }
         if (event.down) {
-            if (_menuIdx < 2) { _menuIdx++; updateMenuSelection(); }
+            if (_menuIdx < kMenuCount - 1) { _menuIdx++; updateMenuSelection(); }
             return true;
         }
         if (event.enter || event.character == '\n' || event.character == '\r') {
@@ -644,9 +782,18 @@ bool LvNodesScreen::handleKey(const KeyEvent& event) {
                         hideOverlay();
                     }
                     break;
+#if defined(RSSENSECAPD1L)
+                case 2:
+                    openNomadBrowserScreen();
+                    break;
+                case 3:
+                    hideOverlay();
+                    break;
+#else
                 case 2:
                     hideOverlay();
                     break;
+#endif
             }
             return true;
         }
@@ -661,18 +808,10 @@ bool LvNodesScreen::handleKey(const KeyEvent& event) {
     // --- Confirm delete mode ---
     if (_confirmDelete) {
         if (event.enter || event.character == '\n' || event.character == '\r') {
-            if (!_actionNodeHex.empty()) {
-                bool removed = _am->deleteContactByHex(_actionNodeHex);
-                if (_ui) _ui->lvStatusBar().showToast(
-                    removed ? "Removing contact..." : "Contact action unavailable", 1200);
-                _actionNodeHex.clear();
-                rebuildList();
-            }
-            _confirmDelete = false;
+            finishConfirmDelete(true);
             return true;
         }
-        _confirmDelete = false;
-        if (_ui) _ui->lvStatusBar().showToast("Kept contact", 800);
+        finishConfirmDelete(false);
         return true;
     }
 

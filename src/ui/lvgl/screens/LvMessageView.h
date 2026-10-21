@@ -31,6 +31,18 @@ public:
     // keyboard appears on tapping the field, not immediately on entering
     // any chat — see the _textarea focus/defocus handler in createUI().
     bool wantsVirtualKeyboard() const override { return composerActive() && _textareaFocused; }
+    // See UIManager.h's doc comment -- the keyboard's own Close button never
+    // fires the textarea's LV_EVENT_DEFOCUSED, so without this, closing it
+    // that way left _textareaFocused stuck true: wantsVirtualKeyboard() kept
+    // reporting true, refreshUI()'s screen-height reservation never reverted
+    // (the message history stayed shrunk), and the keyboard itself wouldn't
+    // re-show either (LvVirtualKeyboard's own dismissed-by-user latch,
+    // waiting for a false->true edge on "wanted" that could now never come).
+    void onVirtualKeyboardDismissed() override {
+        _textareaFocused = false;
+        refreshComposerPlaceholder();
+        if (_textarea) lv_obj_clear_state(_textarea, LV_STATE_FOCUSED);
+    }
 
     bool setPeerHex(const std::string& hex);
     bool prepareMaintenance() { _rrcSendRequested=false;return leaveRrcDraft(); }

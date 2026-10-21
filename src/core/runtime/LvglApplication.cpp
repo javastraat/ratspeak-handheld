@@ -49,6 +49,9 @@
 #include "screens/LvBootScreen.h"
 #include "screens/LvHomeScreen.h"
 #include "screens/LvNodesScreen.h"
+#if defined(RSSENSECAPD1L)
+#include "screens/LvNomadBrowserScreen.h"
+#endif
 #include "screens/LvMessagesScreen.h"
 #include "LvVoicePanel.h"
 #include "voice/VoiceInput.h"
@@ -158,6 +161,9 @@ GPSManager gps;
 LvBootScreen lvBootScreen;
 LvHomeScreen lvHomeScreen;
 LvNodesScreen lvNodesScreen;
+#if defined(RSSENSECAPD1L)
+LvNomadBrowserScreen lvNomadBrowserScreen;
+#endif
 LvMessagesScreen lvMessagesScreen;
 LvVoicePanel lvVoicePanel;
 LvContactsScreen lvContactsScreen;
@@ -172,6 +178,20 @@ LvDataCleanScreen lvDataCleanScreen;
 
 // Tab-screen mapping (4 tabs) — LVGL versions
 LvScreen* lvTabScreens[LvTabBar::TAB_COUNT] = {};
+
+// Every path that switches to a tab's screen (the tab bar's own callback,
+// plus keyboard/trackball tab-cycling below) goes through here, not a bare
+// ::ui.setScreen(lvTabScreens[tab]) -- the Nomad tab needs to land on its
+// favorites "home" state, not whatever peer was last browsed (openFor()
+// leaves _peerHex set after you back out of a browse; entering via the tab
+// bar is not the same as entering via Peers' per-contact action, which
+// calls openFor() itself before switching screens).
+void enterTab(int tab) {
+#if defined(RSSENSECAPD1L)
+    if (tab == LvTabBar::TAB_NOMAD) lvNomadBrowserScreen.openHome();
+#endif
+    if (lvTabScreens[tab]) ::ui.setScreen(lvTabScreens[tab]);
+}
 
 // --- State ---
 bool radioOnline = false;
@@ -713,8 +733,7 @@ void handheld::lvgl_application::setup() {
     hotkeys.registerHotkey('r', "RSSI Monitor", onHotkeyRssiMonitor);
     hotkeys.setTabCycleCallback([](int dir) {
         ::ui.lvTabBar().cycleTab(dir);
-        int tab = ::ui.lvTabBar().getActiveTab();
-        if (lvTabScreens[tab]) ::ui.setScreen(lvTabScreens[tab]);
+        enterTab(::ui.lvTabBar().getActiveTab());
     });
     lvBootScreen.setProgress(0.58f, "Hotkeys registered");
     // (LVGL boot renders via lv_timer_handler in setProgress)
@@ -1049,6 +1068,9 @@ void handheld::lvgl_application::setup() {
     ::ui.setVoicePanel(&lvVoicePanel);
     lvContactsScreen.setService(&serviceClient);
     lvNodesScreen.setService(&serviceClient);
+#if defined(RSSENSECAPD1L)
+    lvNomadBrowserScreen.setService(&serviceClient);
+#endif
     lvHomeScreen.setService(&serviceClient);
     // Wire up LVGL screen dependencies
     lvHomeScreen.setBackend(&serviceClient.protocol);
@@ -1154,6 +1176,9 @@ void handheld::lvgl_application::setup() {
         ::ui.lvTabBar().setActiveTab(LvTabBar::TAB_MSGS);
         ::ui.setScreen(&lvMessageView);
     });
+#if defined(RSSENSECAPD1L)
+    lvNodesScreen.setNomadBrowserScreen(&lvNomadBrowserScreen);
+#endif
 
     lvMessagesScreen.setAnnounceManager(&serviceClient.nodes);
     lvMessagesScreen.setBackend(&serviceClient.protocol);
@@ -1210,11 +1235,12 @@ void handheld::lvgl_application::setup() {
     lvTabScreens[LvTabBar::TAB_CONTACTS] = &lvContactsScreen;
     lvTabScreens[LvTabBar::TAB_MSGS]     = &lvMessagesScreen;
     lvTabScreens[LvTabBar::TAB_NODES]    = &lvNodesScreen;
+#if defined(RSSENSECAPD1L)
+    lvTabScreens[LvTabBar::TAB_NOMAD]    = &lvNomadBrowserScreen;
+#endif
     lvTabScreens[LvTabBar::TAB_SETTINGS] = &lvSettingsScreen;
 
-    ::ui.lvTabBar().setTabCallback([](int tab) {
-        if (lvTabScreens[tab]) ::ui.setScreen(lvTabScreens[tab]);
-    });
+    ::ui.lvTabBar().setTabCallback([](int tab) { enterTab(tab); });
     bootTraceStage("screen-wiring");
 
     // Data clean screen (first boot only — when SD has old data)
@@ -1371,13 +1397,11 @@ static void dispatchKey(const KeyEvent& evt) {
                     bool tabRight = (evt.character == '/') || evt.right;
                     if (tabLeft) {
                         ::ui.lvTabBar().cycleTab(-1);
-                        int tab = ::ui.lvTabBar().getActiveTab();
-                        if (lvTabScreens[tab]) ::ui.setScreen(lvTabScreens[tab]);
+                        enterTab(::ui.lvTabBar().getActiveTab());
                     }
                     if (tabRight) {
                         ::ui.lvTabBar().cycleTab(1);
-                        int tab = ::ui.lvTabBar().getActiveTab();
-                        if (lvTabScreens[tab]) ::ui.setScreen(lvTabScreens[tab]);
+                        enterTab(::ui.lvTabBar().getActiveTab());
                     }
                 }
             }
@@ -1579,6 +1603,7 @@ void handheld::lvgl_application::loop() {
     {
         LvScreen* screen = ::ui.getScreen();
         lvVirtualKeyboard.setActive(screen && screen->wantsVirtualKeyboard());
+        if (lvVirtualKeyboard.takeDismissed() && screen) screen->onVirtualKeyboardDismissed();
     }
 #endif
 
@@ -1624,7 +1649,33 @@ void handheld::lvgl_application::loop() {
     }
 
     lvVoicePanel.poll(powerMgr.isScreenOn() && serviceClient.available() && serviceClient.status().state==handheld::ServiceState::Running && !lvHelpOverlay.isVisible() && !lvQrOverlay.isVisible());
-    if(lvVoicePanel.active() && powerMgr.isScreenOn()) powerMgr.activity();
+    // DIAGNOSTIC (temporary): the block below unconditionally resets the idle timer
+    // every tick the memo UI reports "busy" -- if a memo phase ever gets stuck
+    // (never reaching Idle/Review/Sent/Closed), this is what would keep the screen
+    // permanently on, or force DIMMED -> ACTIVE with no real key/touch input. Logs
+    // once when it forces a wake from DIM, then every 5s while it keeps holding the
+    // screen on, so a stuck phase shows up with its duration. Remove once the
+    // display-stays-on report is confirmed or ruled out.
+    static uint32_t diagVoicePanelSince = 0;
+    static uint32_t diagVoicePanelLastLog = 0;
+    if (lvVoicePanel.active() && powerMgr.isScreenOn()) {
+        const uint32_t now = millis();
+        if (diagVoicePanelSince == 0) {
+            const bool wasDimmed = powerMgr.isDimmed();
+            diagVoicePanelSince = now;
+            diagVoicePanelLastLog = now;
+            Serial.printf("[POWER-DIAG] voicePanel.active() holding screen on, phase=%s%s\n",
+                          handheld::memo::description(lvVoicePanel.model().status()),
+                          wasDimmed ? " (forcing wake from DIM)" : "");
+        } else if (now - diagVoicePanelLastLog >= 5000) {
+            diagVoicePanelLastLog = now;
+            Serial.printf("[POWER-DIAG] voicePanel.active() still holding screen on after %lums, phase=%s\n",
+                          (unsigned long)(now - diagVoicePanelSince), handheld::memo::description(lvVoicePanel.model().status()));
+        }
+        powerMgr.activity();
+    } else {
+        diagVoicePanelSince = 0;
+    }
     audio.loop();
     powerMgr.loop();
     if (millis() - lastStatusUpdate >= 100) {

@@ -10,6 +10,9 @@
 #include <vector>
 
 class UserConfig;
+#if defined(RSSENSECAPD1L)
+class LvNomadBrowserScreen;
+#endif
 
 class LvNodesScreen : public LvScreen {
 public:
@@ -26,6 +29,9 @@ public:
     void setNodeSelectedCallback(NodeSelectedCallback cb) { _onSelect = cb; }
     void setUIManager(class UIManager* ui) { _ui = ui; }
     void setUserConfig(UserConfig* cfg) { _cfg = cfg; }
+#if defined(RSSENSECAPD1L)
+    void setNomadBrowserScreen(LvNomadBrowserScreen* screen) { _nomadScreen = screen; }
+#endif
     bool handleLongPress() override;
     bool wantsVirtualKeyboard() const override { return _actionState == NodeAction::NICKNAME_INPUT; }
 
@@ -44,6 +50,18 @@ private:
     void updateMenuSelection();
     void updateNicknameDisplay();
     void updateOverlayDetails(const char* title);
+    // Touch-only boards have no physical Enter/Backspace, so delete confirmation
+    // needs tappable buttons, not just the status-bar hint text.
+    void showConfirmDelete(const std::string& nodeHex);
+    void finishConfirmDelete(bool remove);
+#if defined(RSSENSECAPD1L)
+    // D1L-only (touch-only, square panel -- see ratspeak-handheld TODO.md's "Nomad
+    // browser from Peers menu"): hand the tapped peer off to the dedicated fullscreen
+    // LvNomadBrowserScreen and switch to it. The actual NomadNet fetch (and its
+    // publicKey, derived from the peer's own saved identity, never a live
+    // nomadnetwork.node announce) lives entirely in that screen now.
+    void openNomadBrowserScreen();
+#endif
 
     handheld::NodeView* _am = nullptr;
     class UIManager* _ui = nullptr;
@@ -65,11 +83,21 @@ private:
     lv_obj_t* _overlayTitle = nullptr;
     lv_obj_t* _overlayMeta = nullptr;
     lv_obj_t* _overlayReach = nullptr;
-    lv_obj_t* _menuLabels[3] = {};
-    lv_obj_t* _menuBtns[3] = {};
+    // D1L gets a 4th item ("Nomad Browser"); other boards keep the original 3.
+#if defined(RSSENSECAPD1L)
+    static constexpr int kMenuCount = 4;
+#else
+    static constexpr int kMenuCount = 3;
+#endif
+    lv_obj_t* _menuLabels[kMenuCount] = {};
+    lv_obj_t* _menuBtns[kMenuCount] = {};
     lv_obj_t* _nicknameBox = nullptr;
     lv_obj_t* _nicknameLbl = nullptr;
     lv_obj_t* _nicknameHint = nullptr;
+    lv_obj_t* _confirmBox = nullptr;
+#if defined(RSSENSECAPD1L)
+    LvNomadBrowserScreen* _nomadScreen = nullptr;
+#endif
     // Square/tall panels (today: SenseCAP D1L) have room for the same
     // per-row identicon Contacts already shows; kRowH/kTextX match
     // LvContactsScreen's kContactRowH/kContactTextX exactly for visual

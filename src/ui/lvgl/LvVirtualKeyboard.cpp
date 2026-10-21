@@ -50,6 +50,7 @@ void LvVirtualKeyboard::setActive(bool wanted) {
 
 void LvVirtualKeyboard::dismiss() {
     _dismissedByUser = true;
+    _justDismissed = true;
     _shown = false;
     lv_obj_add_flag(_kb, LV_OBJ_FLAG_HIDDEN);
 }
