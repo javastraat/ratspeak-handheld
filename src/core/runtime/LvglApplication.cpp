@@ -3,6 +3,7 @@
 #include "runtime/LvglApplication.h"
 #include "LvMemory.h"
 #include "runtime/FactoryResetRecovery.h"
+#include "runtime/StorageStartup.h"
 #include "runtime/DiscoveryStartup.h"
 #include "hal/NetworkTime.h"
 #include "radio/RadioSettings.h"
@@ -624,8 +625,9 @@ void handheld::lvgl_application::setup() {
     // (LVGL boot renders via lv_timer_handler in setProgress)
     bootTraceStage("input-init");
 
-    // A reset intent is checked before early config load. Display and input
-    // are now ready; recover explicitly before any config/identity import.
+    // Unmounted storage, then a reset intent, are resolved before early config
+    // use. Display and input are now ready; recover before any import.
+    handheld::storageStartup(flash, keyboard, ::display.gfx(), []() { ESP.restart(); });
     handheld::factoryResetRecovery(flash, sdStore, keyboard, ::display.gfx(), []() { ESP.restart(); });
 
     // Refuse a known SD initialization failure before dependent imports/writes.

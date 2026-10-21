@@ -1,4 +1,5 @@
 #include "runtime/FactoryResetRecovery.h"
+#include "runtime/StorageStartup.h"
 #include "runtime/DiscoveryStartup.h"
 #include "hal/NetworkTime.h"
 #include "radio/RadioSettings.h"
@@ -554,12 +555,9 @@ void setup() {
     bootScreen.setProgress(0.25f, "Mounting flash...");
     ui.render();
     const bool flashReady = flash.begin();
-    if (!flashReady) {
-        Serial.println("[BOOT] Flash startup blocked; preserving reset/data recovery");
-        bootScreen.setProgress(0.25f, "Storage recovery pending");
-        ui.render();
-    }
-    bootScreen.setProgress(0.3f, "Storage ready");
+    handheld::storageStartup(flash, keyboard, M5Cardputer.Display, []() { ESP.restart(); });
+    if (!flashReady) Serial.println("[BOOT] Flash startup blocked; preserving reset/data recovery");
+    bootScreen.setProgress(0.3f, flashReady ? "Storage ready" : "Storage recovery pending");
     ui.render();
 
     // Boot loop detection (NVS — separate from LittleFS)
