@@ -10,7 +10,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-from source_fingerprint import source_fingerprint
+from source_fingerprint import ARCHIVE_SOURCES, source_fingerprint
 from release_identity import archive_inputs, check_workspace, load_identity
 
 
@@ -81,10 +81,10 @@ def main() -> int:
         ):
             raise SystemExit(f"{name} source checkout is dirty")
 
-    # A content fingerprint lets source and generated archives share one commit
-    # without making the provenance depend on that commit's own identifier.
-    if provenance.get("ratspeak-handheld.source-sha256") != source_fingerprint(ROOT):
-        raise SystemExit("ratspeak-handheld archive provenance is stale: source fingerprint differs")
+    # A content fingerprint of the archive inputs lets source and generated
+    # archives share one commit without depending on that commit's identifier.
+    if provenance.get("protocol.source-sha256") != source_fingerprint(ROOT, ARCHIVE_SOURCES):
+        raise SystemExit("protocol archive provenance is stale: protocol source fingerprint differs")
     if provenance.get("source-graph-sha256") != archive_inputs(ROOT):
         raise SystemExit("archive provenance is stale: selected Lite source graph fingerprint differs")
     if provenance.get("toolchain") != load_identity(ROOT)["archive_toolchain"]:

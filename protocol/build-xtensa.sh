@@ -23,7 +23,7 @@ test "$ver" = "$(python3 ../tools/release_identity.py toolchain)" || {
     exit 1
 }
 
-source_fingerprint="$(python3 ../tools/source_fingerprint.py)"
+source_fingerprint="$(python3 ../tools/source_fingerprint.py --archive)"
 
 # Cargo hashes the absolute path of out-of-workspace path dependencies into
 # symbol names, and panic locations embed source paths. Build through one fixed
@@ -57,7 +57,7 @@ for profile in small micro; do
         "prebuilt/xtensa-esp32s3/$profile/"
 done
 
-test "$source_fingerprint" = "$(python3 ../tools/source_fingerprint.py)" || {
+test "$source_fingerprint" = "$(python3 ../tools/source_fingerprint.py --archive)" || {
     echo "ERROR: source changed while rebuilding archives" >&2
     exit 1
 }
@@ -71,7 +71,7 @@ test "$archive_inputs" = "$(python3 ../tools/release_identity.py archive-inputs)
 {
     echo "built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "toolchain: $ver"
-    echo "ratspeak-handheld.source-sha256: $source_fingerprint"
+    echo "protocol.source-sha256: $source_fingerprint"
     echo "source-graph-sha256: $archive_inputs"
     echo "rsReticulumLite: $(git -C ../../rsReticulumLite rev-parse HEAD)$( { git -C ../../rsReticulumLite diff --quiet HEAD && test -z "$(git -C ../../rsReticulumLite ls-files --others --exclude-standard 2>/dev/null)"; } 2>/dev/null || echo ' +dirty')"
     echo "rsLXMFLite: $(git -C ../../rsLXMFLite rev-parse HEAD)$( { git -C ../../rsLXMFLite diff --quiet HEAD && test -z "$(git -C ../../rsLXMFLite ls-files --others --exclude-standard 2>/dev/null)"; } 2>/dev/null || echo ' +dirty')"
