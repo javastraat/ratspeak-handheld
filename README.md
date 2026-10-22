@@ -98,6 +98,9 @@ available in this release.
 New or reset radio settings use **Medium Fast**. Existing saved presets are
 retained; match the radio settings on devices that communicate directly.
 
+Follow your local radio regulations for frequency, transmit power and duty
+cycle. Region and link presets do not limit power or airtime for your region.
+
 ## Propagation
 
 In **Settings → Propagation**, turn propagation ON to use an LXMF propagation

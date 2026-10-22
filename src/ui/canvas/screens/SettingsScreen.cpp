@@ -8,6 +8,7 @@
 #include "radio/RadioSettings.h"
 #include "util/DisplayText.h"
 #include "storage/MessageStore.h"
+#include "ui/RadioSettingsText.h"
 #include "ui/StorageHistoryText.h"
 #include "ui/VoiceSettingsText.h"
 #include <algorithm>
@@ -256,6 +257,7 @@ void SettingsScreen::buildRadioMenu() {
     addRow(buf, RowAction::Edit, 3);
     snprintf(buf, sizeof(buf), "Preamble: %ld symbols", s.loraPreamble);
     addRow(buf, RowAction::Edit, 5);
+    addRow(handheld::ui::radio_settings::LocalRulesShort, RowAction::Info, 0, Theme::MUTED);
 
     addRow("< Back", RowAction::Back);
 }
@@ -967,6 +969,13 @@ void SettingsScreen::render(M5Canvas& canvas) {
         if (_subMenu == MENU_VOICE && _editField == 1) {
             canvas.drawString(handheld::ui::voice_settings::StorageScope, 4, y0 + headerH + 50);
             canvas.drawString(handheld::ui::voice_settings::Expiry, 4, y0 + headerH + 62);
+        }
+        if (_subMenu == MENU_RADIO && (_editField == 0 || _editField == 4)) {
+            // Frequency and power edits wrap the shared line for this width.
+            const std::string rules = handheld::ui::radio_settings::LocalRules;
+            const size_t cut = rules.rfind(' ', size_t(Theme::CONTENT_W - 8) / Theme::CHAR_W);
+            canvas.drawString(rules.substr(0, cut).c_str(), 4, y0 + headerH + 50);
+            canvas.drawString(rules.substr(cut + 1).c_str(), 4, y0 + headerH + 62);
         }
     } else {
         _list.render(canvas, 0, y0 + headerH + 2, Theme::CONTENT_W,
