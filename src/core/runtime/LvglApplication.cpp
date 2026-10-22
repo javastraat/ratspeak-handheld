@@ -3,6 +3,7 @@
 #include "runtime/LvglApplication.h"
 #include "LvMemory.h"
 #include "runtime/FactoryResetRecovery.h"
+#include "runtime/StorageStartup.h"
 #include "runtime/DiscoveryStartup.h"
 #include "hal/NetworkTime.h"
 #include "radio/RadioSettings.h"
@@ -56,6 +57,7 @@
 #include "screens/LvContactsScreen.h"
 #include "screens/LvSettingsScreen.h"
 #include "screens/LvHelpOverlay.h"
+#include "screens/LvNoticeOverlay.h"
 #include "screens/LvQrOverlay.h"
 #include "LvVirtualKeyboard.h"
 #include "screens/LvNameInputScreen.h"
@@ -64,6 +66,7 @@
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
 #include "storage/MessageStore.h"
+#include "ui/RollOffNotice.h"
 #include "reticulum/AnnounceManager.h"
 #include "reticulum/LXMFManager.h"
 #include "reticulum/IdentityManager.h"
@@ -148,6 +151,7 @@ handheld::ServiceRunner serviceRunner(deviceService);
 handheld::WiFiConnection wifiConnection;
 static bool homeAnnounceRequested = false;
 static bool serviceAvailable = false;
+static bool rollOffChecked = false;
 static void serviceNetworkPoll();
 static void applyUiSettings();
 #if HAS_GPS
@@ -164,6 +168,7 @@ LvContactsScreen lvContactsScreen;
 LvMessageView lvMessageView;
 LvSettingsScreen lvSettingsScreen;
 LvHelpOverlay lvHelpOverlay;
+LvNoticeOverlay lvNoticeOverlay;
 LvQrOverlay lvQrOverlay;
 LvVirtualKeyboard lvVirtualKeyboard;
 LvNameInputScreen lvNameInputScreen;
@@ -691,8 +696,9 @@ void handheld::lvgl_application::setup() {
     // (LVGL boot renders via lv_timer_handler in setProgress)
     bootTraceStage("input-init");
 
-    // A reset intent is checked before early config load. Display and input
-    // are now ready; recover explicitly before any config/identity import.
+    // Unmounted storage, then a reset intent, are resolved before early config
+    // use. Display and input are now ready; recover before any import.
+    handheld::storageStartup(flash, keyboard, ::display.gfx(), []() { ESP.restart(); });
     handheld::factoryResetRecovery(flash, sdStore, keyboard, ::display.gfx(), []() { ESP.restart(); }, &touch);
 
     // Refuse a known SD initialization failure before dependent imports/writes.
@@ -1344,6 +1350,7 @@ static void dispatchKey(const KeyEvent& evt) {
 
     // Help overlay intercepts all keys when visible
     if (lvVoicePanel.handleKey(evt)) {}
+    else if (lvNoticeOverlay.handleKey(evt)) {}
     else if (lvHelpOverlay.isVisible()) {
         lvHelpOverlay.handleKey(evt);
     }
@@ -1390,6 +1397,7 @@ void handheld::lvgl_application::injectKeyEvent(const KeyEvent& evt) { dispatchK
 // Both input sources use the screen's existing hold action. QR keeps ownership;
 // an unconsumed hold blanks the screen, as the trackball hold always has.
 static void dispatchLongPress() {
+    if (lvNoticeOverlay.isVisible()) return;
     if (lvQrOverlay.isVisible() || !::ui.handleLongPress()) {
         handheld::voice::VoiceInput::instance().cancel();
         powerMgr.forceScreenOff();
@@ -1423,7 +1431,8 @@ static void finishRemoteUi(const handheld::diagnostics::RemoteUiRequest& request
     state.tab = ::ui.lvTabBar().getActiveTab();
     state.asleep = !powerMgr.isScreenOn();
     state.boot = ::ui.isBootMode();
-    state.overlay = lvHelpOverlay.isVisible() ? "help" : lvQrOverlay.isVisible() ? "qr" : "none";
+    state.overlay = lvNoticeOverlay.isVisible() ? "notice" : lvHelpOverlay.isVisible() ? "help" :
+        lvQrOverlay.isVisible() ? "qr" : "none";
     state.focus = LvInput::group() ? lv_group_get_focused(LvInput::group()) : nullptr;
     lv_obj_update_layout(lv_scr_act());
     remoteUi.finish(handheld::diagnostics::LvglUiSnapshot::encode(
@@ -1623,7 +1632,7 @@ void handheld::lvgl_application::loop() {
         }
     }
 
-    lvVoicePanel.poll(powerMgr.isScreenOn() && serviceClient.available() && serviceClient.status().state==handheld::ServiceState::Running && !lvHelpOverlay.isVisible() && !lvQrOverlay.isVisible());
+    lvVoicePanel.poll(powerMgr.isScreenOn() && serviceClient.available() && serviceClient.status().state==handheld::ServiceState::Running && !lvHelpOverlay.isVisible() && !lvQrOverlay.isVisible() && !lvNoticeOverlay.isVisible());
     if(lvVoicePanel.active() && powerMgr.isScreenOn()) powerMgr.activity();
     audio.loop();
     powerMgr.loop();
@@ -1636,6 +1645,13 @@ void handheld::lvgl_application::loop() {
         ::ui.lvStatusBar().setWiFiActive(status.wifi || status.ap);
         ::ui.lvStatusBar().setTCPConnected(status.tcpUp != 0);
         ::ui.lvStatusBar().setAutoIfacePeers(status.autoPeers);
+        if (status.historyRolledOff && !rollOffChecked && !::ui.isBootMode()) {
+            rollOffChecked = true;
+            namespace text = handheld::ui::storage_history;
+            if (!text::rollOffSeen()) {
+                lvHelpOverlay.hide(); lvNoticeOverlay.show(text::RollOffTitle, text::RollOffNotice, text::markRollOffSeen);
+            }
+        }
         if (powerMgr.isScreenOn()) {
             ::ui.lvStatusBar().setBatteryPercent(powerMgr.batteryPercent());
             ::ui.lvStatusBar().setCharging(powerMgr.isCharging());

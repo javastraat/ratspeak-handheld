@@ -27,7 +27,7 @@ public:
         uint8_t peer[16] = {};
         uint32_t cutoff = 0;
         uint8_t medium = 0;
-        bool opened = false, includeDeleted = false, audioOnly = false;
+        bool opened = false, includeDeleted = false, audioOnly = false, flashOnly = false;
         Error error = Error::None;
     };
     // Caller holds an explicit filesystem lease. No retained filename vector.
@@ -101,6 +101,10 @@ private:
     void conversation(const Request&, uint8_t*, size_t, Result&);
     void trim(const Request&, Result&);
     void retainAudio(const Request&, Result&);
+    void reclaim(const Request&, Result&);
+    bool removable(const RecordKey&, const StoredRecordHeader&, MessageDocument&);
+    bool mirrorVerified(const RecordKey&, MessageDocument&, const StoredRecordHeader&, Result&);
+    bool evictInternal(const RecordKey&, MessageDocument&, const StoredRecordHeader&, bool cached, Result&);
     bool reserveCounter(uint32_t&);
     bool reserveRrcCounter(uint32_t& counter, uint32_t minimum);
     bool retainedCopy(const RecordKey&, unsigned medium, MessageDocument&);

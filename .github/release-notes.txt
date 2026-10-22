@@ -1,7 +1,10 @@
-## v2.3.2
+## v2.3.3
 
 ### Fixed and improved
 
-- Fixed devices upgraded from rsCardputer with an SD card stopping at "Storage error - data preserved".
-- If messages on the SD card can't be loaded, device defaults to internal storage.
-- Messages still queued in rsCardputer are not sent again after upgrading.
+- Standalone and RNode `.bin` downloads are now complete images, for esptool at 0x0 or bmorcelli's Launcher.
+- After a Launcher install, internal storage is prepared automatically, and the device asks before erasing another app's data.
+- When internal storage runs low, the oldest messages are removed; an SD card keeps the full history.
+- Settings → Storage shows internal usage and whether history is complete on the card or rolling.
+- Fixed incoming messages being delayed or failing when the last packet of a link's setup was lost or late.
+- Follow your local radio regulations for frequency, transmit power and duty cycle; Settings → LoRa now says so.

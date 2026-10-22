@@ -958,8 +958,8 @@ rs_handheld_status_t rs_handheld_rns_seed_seen_message(rs_handheld_rns_t *ctx, c
 /* ACTIVE initiator only: build LINKIDENTIFY plaintext, then encrypt on that Link. */
 rs_handheld_status_t rs_handheld_rns_link_identify(const rs_handheld_rns_t *ctx,
                                                 const uint8_t link_id[16], uint8_t out[128]);
-/* ACTIVE Link only: verify decrypted LINKIDENTIFY; retain first identity in the
- * Link owner and suppress duplicate callbacks. Output unchanged on error. */
+/* Responder Link, from the handshake on: verify decrypted LINKIDENTIFY; retain first
+ * identity in the Link owner and suppress duplicate callbacks. Output unchanged on error. */
 rs_handheld_status_t rs_handheld_rns_link_verify_identification(const uint8_t link_id[16],
                                                 const uint8_t *data, size_t data_len,
                                                 uint8_t out_public[64]);

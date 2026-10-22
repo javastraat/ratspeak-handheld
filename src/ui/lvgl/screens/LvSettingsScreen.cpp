@@ -21,6 +21,8 @@
 #include <WiFi.h>
 #include "runtime/FirmwareReleaseCheck.h"
 #include "fonts/fonts.h"
+#include "ui/RadioSettingsText.h"
+#include "ui/StorageHistoryText.h"
 #include "ui/VoiceSettingsText.h"
 
 namespace {
@@ -1055,6 +1057,13 @@ void LvSettingsScreen::buildItems() {
         [](int v) { return String(onOff(v != 0)); }});
     _items.back().id = SettingId::SdMessageStore;
     idx++;
+    _items.push_back({handheld::ui::storage_history::Label, SettingType::READONLY, nullptr, nullptr,
+        [this](int) {
+            if (!_service) return String("Unknown");
+            return String(handheld::ui::storage_history::mode(_service->status().history));
+        }});
+    _items.back().id = SettingId::StorageHistory;
+    idx++;
     _items.push_back({"Free Heap", SettingType::READONLY, nullptr, nullptr,
         [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});
     _items.back().id = SettingId::FreeHeap;
@@ -1613,7 +1622,8 @@ void LvSettingsScreen::rebuildItemList() {
         const bool deliveryPolicy = item.id == SettingId::PropagationDelivery;
         bool selected = (i == _selectedIdx);
         const bool voiceLimitHint = _editing && selected && item.id == SettingId::MaxVoiceMessages;
-        const int valueOffset = voiceLimitHint ? -18 : fullValue || (_freqEditing && selected) ? -9 : 0;
+        const bool radioRules = item.id == SettingId::RegionPreset;
+        const int valueOffset = voiceLimitHint ? -18 : fullValue || radioRules || (_freqEditing && selected) ? -9 : 0;
         bool editable = isEditable(i);
         bool rebootPending = settingNeedsReboot(item);
         bool armed = armedAction(item);
@@ -1621,7 +1631,7 @@ void LvSettingsScreen::rebuildItemList() {
         uint32_t armedColor = destructive ? Theme::ERROR_CLR : Theme::WARNING_CLR;
 
         lv_obj_t* row = lv_obj_create(_scrollContainer);
-        lv_obj_set_size(row, Theme::CONTENT_W, voiceLimitHint ? 64 : fullValue ? 44 : _freqEditing && selected ? 46 : 28);
+        lv_obj_set_size(row, Theme::CONTENT_W, voiceLimitHint ? 64 : fullValue || radioRules ? 44 : _freqEditing && selected ? 46 : 28);
         lv_obj_add_style(row, LvTheme::styleListBtn(), 0);
         lv_obj_add_style(row, LvTheme::styleListBtnFocused(), LV_STATE_FOCUSED);
         lv_obj_set_style_bg_color(row, lv_color_hex(armed ? Theme::BG_SURFACE : (selected ? Theme::BG_HOVER : Theme::BG)), 0);
@@ -1776,6 +1786,15 @@ void LvSettingsScreen::rebuildItemList() {
             lv_obj_set_style_text_line_space(hint, 2, 0);
             lv_label_set_text_fmt(hint, "%s\n%s", handheld::ui::voice_settings::StorageScope,
                                   handheld::ui::voice_settings::Expiry);
+            lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 8, -3);
+        }
+
+        if (radioRules) {
+            lv_obj_t* hint = lv_label_create(row);
+            lv_obj_set_style_text_font(hint, &lv_font_rsdeck_10, 0);
+            lv_obj_set_style_text_color(hint, lv_color_hex(Theme::TEXT_MUTED), 0);
+            clipLabel(hint, Theme::CONTENT_W - 16);
+            lv_label_set_text(hint, handheld::ui::radio_settings::LocalRules);
             lv_obj_align(hint, LV_ALIGN_BOTTOM_LEFT, 8, -3);
         }
 

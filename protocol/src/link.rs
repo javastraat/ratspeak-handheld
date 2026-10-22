@@ -48,7 +48,7 @@ pub unsafe extern "C" fn rs_handheld_rns_link_identify(
     })
 }
 
-/// Verify a decrypted 128-byte LINKIDENTIFY on its exact ACTIVE Link.
+/// Verify a decrypted 128-byte LINKIDENTIFY on its exact responder Link, from the handshake on.
 /// C++ must retain the first verified identity and suppress repeat callbacks.
 ///
 /// # Safety
