@@ -1555,7 +1555,15 @@ void LvNomadBrowserScreen::renderMicron(const std::string& source) {
                     lv_obj_set_style_border_color(cb, lv_color_hex(Theme::PRIMARY), LV_PART_INDICATOR | LV_STATE_CHECKED);
                     // Same mechanism the (disabled) default theme uses for the tick mark:
                     // bg_img_src on the indicator renders as a symbol glyph, not an image,
-                    // when given one of LVGL's built-in LV_SYMBOL_* strings.
+                    // when given one of LVGL's built-in LV_SYMBOL_* strings. Must use a
+                    // stock LVGL font here, not the page's own `font` -- the custom
+                    // rsdeck_* fonts (fonts.h) were generated from an explicit codepoint
+                    // list that never included LVGL's private-use symbol range, so
+                    // LV_SYMBOL_OK has no glyph in them at all (confirmed empty on
+                    // hardware: fill rendered, glyph didn't). lv_font_montserrat_12 is
+                    // already compiled in for this (LvStatusBar's wifi icon uses it the
+                    // same way) and does cover the symbol range.
+                    lv_obj_set_style_text_font(cb, &lv_font_montserrat_12, LV_PART_INDICATOR);
                     lv_obj_set_style_bg_img_src(cb, LV_SYMBOL_OK, LV_PART_INDICATOR | LV_STATE_CHECKED);
                     lv_obj_set_style_text_color(cb, lv_color_hex(Theme::BG), LV_PART_INDICATOR | LV_STATE_CHECKED);
                     lv_checkbox_set_text(cb, seg.fieldLabel.empty() ? " " : seg.fieldLabel.c_str());
