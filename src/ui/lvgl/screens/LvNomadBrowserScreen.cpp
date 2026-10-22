@@ -1542,6 +1542,22 @@ void LvNomadBrowserScreen::renderMicron(const std::string& source) {
                 } else {
                     lv_obj_t* cb = lv_checkbox_create(row);
                     lv_obj_set_style_text_font(cb, font, 0);
+                    lv_obj_set_style_text_color(cb, lv_color_hex(Theme::TEXT_PRIMARY), 0);
+                    // LV_USE_THEME_DEFAULT is 0 (lv_conf.h) -- nothing styles the tick-box
+                    // indicator for free like a theme would, so without this it has no
+                    // border/fill and is invisible. Mirrors the text-field box above.
+                    lv_obj_set_style_border_color(cb, lv_color_hex(Theme::BORDER), LV_PART_INDICATOR);
+                    lv_obj_set_style_border_width(cb, 1, LV_PART_INDICATOR);
+                    lv_obj_set_style_bg_color(cb, lv_color_hex(Theme::BG_SURFACE), LV_PART_INDICATOR);
+                    lv_obj_set_style_bg_opa(cb, LV_OPA_COVER, LV_PART_INDICATOR);
+                    lv_obj_set_style_radius(cb, 2, LV_PART_INDICATOR);
+                    lv_obj_set_style_bg_color(cb, lv_color_hex(Theme::PRIMARY), LV_PART_INDICATOR | LV_STATE_CHECKED);
+                    lv_obj_set_style_border_color(cb, lv_color_hex(Theme::PRIMARY), LV_PART_INDICATOR | LV_STATE_CHECKED);
+                    // Same mechanism the (disabled) default theme uses for the tick mark:
+                    // bg_img_src on the indicator renders as a symbol glyph, not an image,
+                    // when given one of LVGL's built-in LV_SYMBOL_* strings.
+                    lv_obj_set_style_bg_img_src(cb, LV_SYMBOL_OK, LV_PART_INDICATOR | LV_STATE_CHECKED);
+                    lv_obj_set_style_text_color(cb, lv_color_hex(Theme::BG), LV_PART_INDICATOR | LV_STATE_CHECKED);
                     lv_checkbox_set_text(cb, seg.fieldLabel.empty() ? " " : seg.fieldLabel.c_str());
                     if (getFormFieldValue(seg.fieldName) == seg.fieldValue && !seg.fieldValue.empty())
                         lv_obj_add_state(cb, LV_STATE_CHECKED);
