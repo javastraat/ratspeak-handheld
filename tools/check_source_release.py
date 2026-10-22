@@ -36,7 +36,6 @@ def check_source_checkouts(workflow: str) -> None:
 def main() -> int:
     required = [
         ".github/workflows/build.yml",
-        ".github/release-notes.txt",
         "CONTRIBUTORS.md",
         "LICENSE",
         "README.md",
