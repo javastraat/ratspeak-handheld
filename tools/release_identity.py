@@ -215,10 +215,13 @@ def check_workspace(root: Path = ROOT, *, allow_dirty: bool = False) -> None:
 
 
 def archive_inputs(root: Path = ROOT) -> str:
-    """Fingerprint actual Lite inputs as well as their selected commit identities."""
+    """Fingerprint the archive toolchain and the selected firmware sources' commits and contents.
+
+    The release version is not compiled into the archives, so a version bump alone
+    leaves their provenance current."""
     from source_fingerprint import source_fingerprint
 
-    records = {"identity": load_identity(root), "firmware_sources": {}}
+    records = {"toolchain": load_identity(root)["archive_toolchain"], "firmware_sources": {}}
     for name, expected in source_pins(root, role="firmware").items():
         source = root.parent / name
         actual = git(source, "rev-parse", "HEAD")
