@@ -156,8 +156,16 @@ private:
 static_assert(sizeof(ConversationWindow<16>) == 2560, "16-row window budget changed");
 static_assert(sizeof(ConversationWindow<64>) == 9472, "64-row window budget changed");
 static_assert(sizeof(ConversationWindow<2>) == 544, "Two-chat viewport budget changed");
-// All handheld frontends share the same visible page size and refresh policy.
+// All handheld frontends share the same visible page size and refresh policy,
+// except the D1L: its 480x480 panel has real room for more than two rows, and
+// LvMessagesScreen's list container is already fixed-height and scrollable
+// (row heights are font-derived, nothing hardcodes a two-row assumption), so
+// this is a pure capacity bump -- no UI layout changes needed on that side.
+#if defined(RSSENSECAPD1L)
+using ConversationList = ConversationWindow<16>;
+#else
 using ConversationList = ConversationWindow<2>;
+#endif
 extern template class ConversationWindow<2>;
 extern template class ConversationWindow<16>;
 extern template class ConversationWindow<64>;
