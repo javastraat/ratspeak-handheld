@@ -21,6 +21,7 @@
 #include <WiFi.h>
 #include "runtime/FirmwareReleaseCheck.h"
 #include "fonts/fonts.h"
+#include "ui/StorageHistoryText.h"
 #include "ui/VoiceSettingsText.h"
 
 namespace {
@@ -1047,6 +1048,13 @@ void LvSettingsScreen::buildItems() {
         [&s](int v) { s.sdStorageEnabled = (v != 0); },
         [](int v) { return String(onOff(v != 0)); }});
     _items.back().id = SettingId::SdMessageStore;
+    idx++;
+    _items.push_back({handheld::ui::storage_history::Label, SettingType::READONLY, nullptr, nullptr,
+        [this](int) {
+            if (!_service) return String("Unknown");
+            return String(handheld::ui::storage_history::mode(_service->status().history));
+        }});
+    _items.back().id = SettingId::StorageHistory;
     idx++;
     _items.push_back({"Free Heap", SettingType::READONLY, nullptr, nullptr,
         [](int) { return String((unsigned long)(ESP.getFreeHeap() / 1024)) + " KB"; }});

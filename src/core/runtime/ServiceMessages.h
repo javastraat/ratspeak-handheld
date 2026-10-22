@@ -114,6 +114,8 @@ struct Status {
     bool ap = false;
     bool sd = false;
     bool flash = false;
+    bool historyRolledOff = false; // The oldest history rolled off for space this boot.
+    storage::HistoryMode history = storage::HistoryMode::Rolling;
     bool scanRunning = false;
     bool gpsFix = false;
     char identity[33] = {};

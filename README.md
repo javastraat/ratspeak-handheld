@@ -66,6 +66,15 @@ back up your identity and messages first. See the
 for backups, updates and Launcher storage, and the [handheld guide](https://docs.ratspeak.org/docs/hardware/handheld-guide)
 for controls and setup.
 
+## Message history
+
+Internal storage keeps the newest messages. When it runs low, the oldest
+messages are removed across all conversations; messages still being sent and
+drafts are kept. To keep the full history, use an SD card for messages: turn on
+**Settings → Storage → SD Message Store**; Cardputer uses an inserted card
+automatically. **Settings → Storage** shows internal usage and whether history
+is complete on the card or rolling.
+
 ## Voice messages
 
 T-Deck, T-Pager, and Cardputer Adv can record and play voice messages up to

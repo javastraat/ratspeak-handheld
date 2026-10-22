@@ -7,6 +7,8 @@
 #include "radio/RadioPresets.h"
 #include "radio/RadioSettings.h"
 #include "util/DisplayText.h"
+#include "storage/MessageStore.h"
+#include "ui/StorageHistoryText.h"
 #include "ui/VoiceSettingsText.h"
 #include <algorithm>
 #include <new>
@@ -227,7 +229,7 @@ void SettingsScreen::buildMainMenu() {
     addRow("Identity", RowAction::OpenMenu, MENU_IDENTITY);
     addRow("Display", RowAction::OpenMenu, MENU_DISPLAY);
     addRow("Alerts", RowAction::OpenMenu, MENU_AUDIO);
-    addRow("SD Card", RowAction::OpenMenu, MENU_SDCARD);
+    addRow("Storage", RowAction::OpenMenu, MENU_SDCARD);
     addRow("Device", RowAction::OpenMenu, MENU_ABOUT);
 }
 
@@ -396,16 +398,24 @@ void SettingsScreen::removeTCPConnection(int index) {
 }
 
 // =============================================================================
-// SD Card submenu
+// Storage submenu
 // =============================================================================
 
 void SettingsScreen::buildSDCardMenu() {
     clearRows();
+    char buf[32];
+    const size_t flashTotal = _flash && _flash->isReady() ? _flash->totalBytes() : 0;
+    if (flashTotal) snprintf(buf, sizeof(buf), "Flash: %lu/%lu KB",
+                             (unsigned long)(_flash->usedBytes() / 1024), (unsigned long)(flashTotal / 1024));
+    else snprintf(buf, sizeof(buf), "Flash: Error");
+    addRow(buf);
+    snprintf(buf, sizeof(buf), "%s: %s", handheld::ui::storage_history::Label,
+             _messages ? handheld::ui::storage_history::mode(_messages->historyMode()) : "Unknown");
+    addRow(buf);
 
     if (_sdStore && _sdStore->isReady()) {
-        addRow("Status: INSERTED");
+        addRow("SD Card: Ready");
 
-        char buf[32];
         uint64_t total = _sdStore->totalBytes();
         uint64_t used = _sdStore->usedBytes();
         uint64_t free = total > used ? total - used : 0;
@@ -420,7 +430,7 @@ void SettingsScreen::buildSDCardMenu() {
         addRow("Initialize & Restart", RowAction::SDInitialize);
         addRow("Wipe Data & Restart", RowAction::SDWipe, 0, Theme::ERROR);
     } else {
-        addRow("Status: NOT INSERTED");
+        addRow("SD Card: Not Found");
     }
 
     addRow("< Back", RowAction::Back);
@@ -928,7 +938,7 @@ void SettingsScreen::render(M5Canvas& canvas) {
 
     // Header with accent bar
     const char* headers[] = {"SETTINGS", "LORA", "WI-FI & TCP", "TCP CONNECTIONS",
-                             "SD CARD", "DISPLAY", "ALERTS", "DEVICE", "WIFI SCAN",
+                             "STORAGE", "DISPLAY", "ALERTS", "DEVICE", "WIFI SCAN",
                              "PROPAGATION", "MANUAL NODE", "PROPAGATION NODES", "VOICE MESSAGES",
                              "IDENTITY", "LINK PRESETS", "WI-FI MODE"};
     static_assert(sizeof(headers) / sizeof(headers[0]) == MENU_COUNT,

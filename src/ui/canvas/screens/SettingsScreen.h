@@ -18,6 +18,8 @@
 #include <vector>
 #include <optional>
 
+class MessageStore;
+
 class SettingsScreen : public Screen {
 public:
     void render(M5Canvas& canvas) override;
@@ -29,6 +31,7 @@ public:
     void setUserConfig(UserConfig* cfg) { releaseCandidate(); _config = cfg; }
     void setFlashStore(FlashStore* flash) { _flash = flash; }
     void setSDStore(SDStore* sd) { _sdStore = sd; }
+    void setMessageStore(const MessageStore* messages) { _messages = messages; }
     using RadioApplyCallback = RadioApply (*)(const UserSettings&, bool);
     void setRadioApply(RadioApplyCallback callback) { _radioApply = callback; }
     bool radioApplyPending() const { return _radioApplyPending; }
@@ -152,6 +155,7 @@ private:
     std::optional<UserConfig> _candidate;
     FlashStore* _flash = nullptr;
     SDStore* _sdStore = nullptr;
+    const MessageStore* _messages = nullptr;
     RadioApplyCallback _radioApply = nullptr;
     bool _radioApplyPending = false, _presetAnnouncePending = false;
     AudioNotify* _audio = nullptr;

@@ -50,6 +50,8 @@
 #include "screens/MaintenanceScreen.h"
 #include "runtime/MaintenanceOperation.h"
 #include "screens/HelpOverlay.h"
+#include "screens/NoticeOverlay.h"
+#include "ui/RollOffNotice.h"
 #include "screens/TimezoneScreen.h"
 #include "power/PowerManager.h"
 #include "audio/AudioNotify.h"
@@ -123,6 +125,8 @@ uint32_t lastSettingsRetry = 0;
 SettingsScreen settingsScreen;
 TimezoneScreen timezoneScreen;
 HelpOverlay helpOverlay;
+NoticeOverlay noticeOverlay;
+static bool rollOffChecked = false;
 
 // Tab-screen mapping
 Screen* tabScreens[4] = {nullptr, nullptr, nullptr, nullptr};
@@ -865,6 +869,7 @@ void setup() {
     });
     settingsScreen.setFlashStore(&flash);
     settingsScreen.setSDStore(&sdStore);
+    settingsScreen.setMessageStore(&messageStore);
     settingsScreen.setRadioApply([](const UserSettings& settings, bool accepting) {
         return applyLiveRadioSettings(radio, rustLoraIface, settings, accepting);
     });
@@ -976,7 +981,16 @@ void loop() {
     // background storage/settings work can occupy the radio owner.
     const bool radioReady = backend->pollRadioBeforeBlockingWork();
     messageStore.configureVoiceRetention(userConfig.settings().voice.maxMessages);
+    messageStore.enableSpaceReclaim();
     messageStore.poll(radioReady); // Deferred cleanup stays on the existing storage worker.
+    if (messageStore.historyRolledOff() && !rollOffChecked && !ui.isBootMode()) {
+        rollOffChecked = true;
+        namespace text = handheld::ui::storage_history;
+        if (!text::rollOffSeen()) {
+            helpOverlay.hide(); noticeOverlay.show(text::RollOffTitle, text::RollOffNotice, text::markRollOffSeen);
+            ui.setOverlay(&noticeOverlay); ui.markAllDirty();
+        }
+    }
     M5.update();
     if (radioReady) { pollCardSettings(); pollCardRadioSettings(); }
     if (maintenance.accepting() && radioReady) {
@@ -1009,6 +1023,10 @@ void loop() {
             ui.handleKey(evt);
         }
         else if (voicePanel.handleKey(evt)) {ui.markAllDirty();}
+        else if (noticeOverlay.handleKey(evt)) {
+            if (!noticeOverlay.isVisible()) ui.setOverlay(nullptr);
+            ui.markAllDirty();
+        }
         else if (helpOverlay.isVisible()) {
             helpOverlay.handleKey(evt);
             ui.setOverlay(helpOverlay.isVisible() ? &helpOverlay : nullptr);
@@ -1122,7 +1140,7 @@ void loop() {
     const auto voicePhase=voicePanel.model().status().phase;
     const auto voiceSeconds=voicePanel.model().elapsedFrames()/25;
     const auto voiceError=voicePanel.model().error();
-    voicePanel.poll(power.isScreenOn() && maintenance.accepting() && !helpOverlay.isVisible());
+    voicePanel.poll(power.isScreenOn() && maintenance.accepting() && !helpOverlay.isVisible() && !noticeOverlay.isVisible());
     if(voiceWasVisible || voicePanel.visible() || voicePhase!=voicePanel.model().status().phase ||
        voiceSeconds!=voicePanel.model().elapsedFrames()/25 || voiceError!=voicePanel.model().error()) ui.markAllDirty();
     if(voicePanel.active() && power.isScreenOn()) power.activity();

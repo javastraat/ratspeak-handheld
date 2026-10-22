@@ -145,7 +145,7 @@ Error MessageTransactions::openDirectory(unsigned which, const char* path, bool 
 
 bool MessageTransactions::nextRecord(Cursor& cursor, RecordKey& key) {
     if (cursor.error != Error::None) return false;
-    for (; cursor.medium < 2;) {
+    for (; cursor.medium < (cursor.flashOnly ? 1 : 2);) {
         auto store = medium(cursor.medium);
         if (!cursor.opened) {
             char parent[96]; directory(cursor.peer, cursor.medium, parent);
@@ -215,7 +215,7 @@ bool MessageTransactions::nextRecord(Cursor& cursor, RecordKey& key) {
 bool MessageTransactions::nextPeer(Cursor& cursor, char output[33]) {
     output[0] = 0;
     if (cursor.error != Error::None) return false;
-    while (cursor.medium < 2) {
+    while (cursor.medium < (cursor.flashOnly ? 1 : 2)) {
         if (!cursor.opened) {
             cursor.error = openDirectory(cursor.medium, cursor.medium == 0 ? PATH_MESSAGES : SD_PATH_MESSAGES,
                                          true, cursor.directory);
@@ -1171,8 +1171,7 @@ void MessageTransactions::trim(const Request& request, Result& result) {
                 if (after.counter && !historyLess(after, entry)) continue;
                 StoredRecordHeader header; const auto error = load(key, document, header);
                 if (error != Error::None) { result.error = error; continue; }
-                if (!header.incoming && header.status != 4 && header.status != 9 && !messaging::failedStatus(header.status)) continue;
-                if (memoRetains(key, header, document.document()["memo_draft"] | uint32_t(0))) continue;
+                if (!removable(key, header, document)) continue;
                 size_t at = 0;
                 while (at < selected && historyLess({oldest[at].counter, oldest[at].incoming}, entry)) ++at;
                 if (at == 8) continue;
@@ -1186,17 +1185,8 @@ void MessageTransactions::trim(const Request& request, Result& result) {
             for (size_t index = 0; index < needed; ++index) {
                 key = oldest[index]; StoredRecordHeader header;
                 if (load(key, document, header) != Error::None) continue;
-                if (target == 0 && _external && _sd && _sd->isReady() && !retainedCopy(key, 1, document)) {
-                    // Repair a missing/stale optional mirror from the committed
-                    // chosen record before dropping the cache's retained copy.
-                    if (_blockedMedia & 2) continue;
-                    char parent[96], candidate[128]; directory(key.peer, 1, parent); path(key, 1, candidate);
-                    auto mirror = medium(1); JsonSource source(document);
-                    if (source.error() != Error::None) { result.error = source.error(); continue; }
-                    if (!mirror.ensureDir(parent) || ensureAudio(key, 1, header, nullptr) != Error::None ||
-                        mirror.write(candidate, source) != Error::None ||
-                        !retainedCopy(key, 1, document)) continue;
-                }
+                if (target == 0 && _external && _sd && _sd->isReady() && !mirrorVerified(key, document, header, result))
+                    continue;
                 char primary[128], backup[128]; path(key, unsigned(target), primary); path(key, unsigned(target), backup, ".bak");
                 if (target == 0) {
                     bool removed = true;
@@ -1331,6 +1321,7 @@ void MessageTransactions::purgeJournal(const Request& request, uint8_t* bytes, s
 #include "RrcTransactions.inc"
 #include "MemoTransactions.inc"
 #include "AudioRetention.inc"
+#include "SpaceReclaim.inc"
 
 void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t length, size_t capacity, Result& result) {
     if (_deferred && !bindWorker()) {
@@ -1361,7 +1352,8 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
         ++_mutationEpoch;
         // Invalidate before attempting a write: partial mirrors, failed cleanup
         // and exceptions can all change persistent state even on failure.
-        if(request.operation!=Operation::RetainAudio) invalidateSummary(request.key.peer);
+        // Retention keys name the protected clip; those passes invalidate what they change.
+        if(request.operation!=Operation::RetainAudio && request.operation!=Operation::Reclaim) invalidateSummary(request.key.peer);
     }
     switch (request.operation) {
     case Operation::MemoPromote: memoTransaction(request, bytes, length, capacity, result); break;
@@ -1389,6 +1381,7 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
     case Operation::ReadConversation: conversation(request, bytes, capacity, result); break;
     case Operation::Trim: trim(request, result); break;
     case Operation::RetainAudio: retainAudio(request,result);break;
+    case Operation::Reclaim: reclaim(request, result); break;
     case Operation::LoadPrepared: case Operation::WritePrepared:
         prepared(request, bytes, length, capacity, result); break;
     case Operation::LoadPurge: case Operation::WritePurge: case Operation::ClearPurge:

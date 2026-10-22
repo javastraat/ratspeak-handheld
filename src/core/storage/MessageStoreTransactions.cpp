@@ -255,6 +255,7 @@ void MessageStore::poll(bool allowMaintenanceIo) {
         if (_deleteFence == ticket) _deleteFence = {};
     }
     pollVoiceRetention(allowMaintenanceIo);
+    pollSpaceReclaim(allowMaintenanceIo);
 }
 
 bool MessageStore::peekResult(Ticket ticket, Result& result, Request* request) const {
@@ -275,6 +276,7 @@ bool MessageStore::setExternalStorageEnabled(bool enabled) {
     handheld::assertDeviceOwner();
     if (_writeQueue.drainCount() != 0) return false;
     _externalStorageEnabled = enabled; transactions().setExternal(enabled);_audioRetentionDirty=true;
+    _reclaimDue=true;_reclaimContinue=false;_reclaimCursor={};
     _audioExternalReady = enabled && _sd && _sd->isReady();
     if (_historyRevision < UINT32_MAX) ++_historyRevision;
     bumpRevision(); return true;
@@ -316,8 +318,41 @@ void MessageStore::pollVoiceRetention(bool allowIo) {
     if(accepted.accepted()) {_audioRetentionTicket=accepted.ticket;_audioRetentionDirty=false;}
 }
 
+HistoryMode MessageStore::historyMode() const {
+    if (_cardPending) return HistoryMode::CardNotLoaded;
+    return _externalStorageEnabled && _sd && _sd->isReady() ? HistoryMode::Card : HistoryMode::Rolling;
+}
+
+void MessageStore::pollSpaceReclaim(bool allowIo) {
+    if (_reclaimTicket.valid()) {
+        Result result;
+        if (!peekResult(_reclaimTicket, result)) return;
+        // A pass may stop short of the goal; the next one resumes past its cursor.
+        _reclaimContinue = result.outcome == Outcome::Committed && result.more;
+        _reclaimCursor = _reclaimContinue ? HistoryEntry{result.key.counter, result.key.incoming} : HistoryEntry{};
+        _reclaimDue |= _reclaimContinue;
+        releaseResult(_reclaimTicket); _reclaimTicket = {};
+    }
+    // The internal-only fallback keeps the card's history; nothing rolls off then.
+    if (!_reclaimEnabled || (!_writeQueue.deferred() && !allowIo) || _cardPending || !_reclaimDue ||
+        !_writeQueue.accepting()) return;
+    Request request; request.operation = Operation::Reclaim; request.key = _protectedVoiceRecord;
+    request.offset = _reclaimContinue ? 1 : 0;
+    request.peerGeneration = _reclaimCursor.counter; request.read = _reclaimCursor.incoming;
+    const auto accepted = submit(request);
+    if (accepted.accepted()) { _reclaimTicket = accepted.ticket; _reclaimDue = false; }
+}
+
 void MessageStore::settle(const Request& request, const Result& result) noexcept {
+    // Any failed internal write may mean a full partition.
+    if (request.operation != Operation::Reclaim &&
+        (result.error == Error::Write || (result.flash.attempted && (result.flash.error == Error::Write ||
+         result.flash.error == Error::Verify || result.flash.error == Error::Rename)))) _reclaimDue = true;
     if (result.outcome != Outcome::Committed) return;
+    if ((request.operation == Operation::CreateIncoming || request.operation == Operation::CreateOutgoing) &&
+        !result.duplicate && ++_createsSinceReclaim >= 8) { _createsSinceReclaim = 0; _reclaimDue = true; }
+    if(request.operation==Operation::Reclaim && !result.total) return;
+    if (request.operation == Operation::Reclaim && result.countDelta < 0) _historyRolledOff = true;
     if(request.operation==Operation::RetainAudio && !result.total) return;
     if(request.operation==Operation::MarkRead && !result.total) return;
     if(((request.operation==Operation::CreateIncoming || request.operation==Operation::CreateOutgoing) && request.audio.state==1) ||
@@ -333,10 +368,14 @@ void MessageStore::settle(const Request& request, const Result& result) noexcept
     // presentation cache or allocation between persistence and result visibility.
     if ((request.operation == Operation::CreateIncoming || request.operation == Operation::CreateOutgoing ||
          request.operation == Operation::DeleteConversation || request.operation == Operation::DeleteRecord || request.operation == Operation::Trim ||
-         request.operation == Operation::MemoPromote || request.operation==Operation::RetainAudio) &&
+         request.operation == Operation::MemoPromote || request.operation==Operation::RetainAudio ||
+         request.operation == Operation::Reclaim) &&
         _historyRevision < UINT32_MAX) ++_historyRevision;
-    if (result.conversationDelta > 0 && _totalConversations < UINT32_MAX) ++_totalConversations;
-    if (result.conversationDelta < 0 && _totalConversations) --_totalConversations;
+    // A reclaim pass can retire several conversations at once.
+    if (result.conversationDelta > 0)
+        _totalConversations += std::min<uint32_t>(uint32_t(result.conversationDelta), UINT32_MAX - _totalConversations);
+    if (result.conversationDelta < 0)
+        _totalConversations -= std::min<uint32_t>(uint32_t(-int(result.conversationDelta)), _totalConversations);
     _totalUnread = result.unreadDelta > 0 && result.unreadDelta > INT_MAX - _totalUnread ? INT_MAX :
         std::max(0, _totalUnread + result.unreadDelta);
     bumpRevision();

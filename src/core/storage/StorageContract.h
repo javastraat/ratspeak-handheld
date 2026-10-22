@@ -28,7 +28,7 @@ enum class Operation : uint8_t {
     RrcRead, RrcAppend, RrcWrite, RrcStatus, RrcPage, RrcMarkRead, RrcClear, RrcSavedRooms, RrcPrivateInbox, RrcObserve,
     ReadAudio,
     MemoRead, MemoBegin, MemoAppend, MemoSeal, MemoClear, MemoPromote, MemoCancel,
-    RetryOutgoing, MemoExpire, DeleteRecord, RetainAudio
+    RetryOutgoing, MemoExpire, DeleteRecord, RetainAudio, Reclaim
 };
 enum class Rejection : uint8_t {
     None, Busy, Invalid, TooLarge, NoMemory, Unavailable, Fenced, Exhausted
@@ -42,6 +42,8 @@ enum class State : uint8_t { Free, Queued, CancelQueued, Running, Ready, Retired
 enum class HistoryDirection : uint8_t { Before, After };
 enum class ConversationOrder : uint8_t { Recent, Peer };
 enum class ConversationDirection : uint8_t { Before, After };
+// Complete on the card in use, held while the card's history is not loaded, or rolling.
+enum class HistoryMode : uint8_t { Card, CardNotLoaded, Rolling };
 
 struct Submission {
     Ticket ticket;
@@ -79,6 +81,10 @@ struct Request {
     // RrcAppend/RrcWrite(Draft) source holds the exact participant identity.
     // RrcAppend/RrcObserve destination holds the local observation nonce.
     // They never participate in LXMF counts, deletion fences or history queries.
+    // Reclaim: key is the protected voice record, offset 1 continues to the
+    // hysteresis goal, and (peerGeneration, read) is an exclusive (counter,
+    // incoming) cursor past records this run already kept. Its result key
+    // carries the next cursor; more asks for another pass.
     // ReadPending: exclusive after (counter, peer), outgoing only.
     // ReadHistoryPage: peer plus exclusive (counter, incoming) in historyDirection.
     // Counter zero starts Before at newest, After at oldest; never discard a

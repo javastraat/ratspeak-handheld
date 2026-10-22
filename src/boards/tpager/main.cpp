@@ -43,6 +43,7 @@
 #include "screens/LvContactsScreen.h"
 #include "screens/LvSettingsScreen.h"
 #include "screens/LvHelpOverlay.h"
+#include "screens/LvNoticeOverlay.h"
 #include "screens/LvQrOverlay.h"
 #include "ui/LvPowerOffOverlay.h"
 #include "screens/LvNameInputScreen.h"
@@ -51,6 +52,7 @@
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
 #include "storage/MessageStore.h"
+#include "ui/RollOffNotice.h"
 #include "reticulum/AnnounceManager.h"
 #include "reticulum/LXMFManager.h"
 #include "reticulum/IdentityManager.h"
@@ -127,6 +129,7 @@ handheld::ServiceRunner serviceRunner(deviceService);
 handheld::WiFiConnection wifiConnection;
 static bool homeAnnounceRequested = false;
 static bool serviceAvailable = false;
+static bool rollOffChecked = false;
 static void serviceNetworkPoll();
 static void applyUiSettings();
 #if HAS_GPS
@@ -143,6 +146,7 @@ LvContactsScreen lvContactsScreen;
 LvMessageView lvMessageView;
 LvSettingsScreen lvSettingsScreen;
 LvHelpOverlay lvHelpOverlay;
+LvNoticeOverlay lvNoticeOverlay;
 LvQrOverlay lvQrOverlay;
 LvPowerOffOverlay lvPowerOffOverlay;
 void performPowerOff();
@@ -1353,7 +1357,7 @@ void loop() {
     // While tab-cycling (navbar mode) screens never own long-press: focus is hidden,
     // so acting on it would be invisible.
     if (inputManager.hadLongPress()) {
-        bool screenOwns = !lvQrOverlay.isVisible() && (ui.isBootMode() || !wheelNavbarMode);
+        bool screenOwns = !lvQrOverlay.isVisible() && !lvNoticeOverlay.isVisible() && (ui.isBootMode() || !wheelNavbarMode);
         if (!(screenOwns && ui.handleLongPress())) {
             handheld::voice::VoiceInput::instance().cancel();
         powerMgr.forceScreenOff();
@@ -1375,6 +1379,7 @@ void loop() {
         if (lvPowerOffOverlay.isVisible()) {
             lvPowerOffOverlay.handleKey(evt);
         }
+        else if (lvNoticeOverlay.handleKey(evt)) {}
         // Help overlay intercepts all keys when visible
         else if (lvHelpOverlay.isVisible()) {
             lvHelpOverlay.handleKey(evt);
@@ -1452,7 +1457,7 @@ void loop() {
         }
     }
 
-    lvVoicePanel.poll(powerMgr.isScreenOn() && serviceClient.available() && serviceClient.status().state==handheld::ServiceState::Running && !lvHelpOverlay.isVisible() && !lvQrOverlay.isVisible() && !lvPowerOffOverlay.isVisible());
+    lvVoicePanel.poll(powerMgr.isScreenOn() && serviceClient.available() && serviceClient.status().state==handheld::ServiceState::Running && !lvHelpOverlay.isVisible() && !lvQrOverlay.isVisible() && !lvPowerOffOverlay.isVisible() && !lvNoticeOverlay.isVisible());
     if(lvVoicePanel.active() && powerMgr.isScreenOn()) powerMgr.activity();
     audio.loop();
     powerMgr.loop();
@@ -1472,6 +1477,13 @@ void loop() {
         ui.lvStatusBar().setWiFiActive(status.wifi || status.ap);
         ui.lvStatusBar().setTCPConnected(status.tcpUp != 0);
         ui.lvStatusBar().setAutoIfacePeers(status.autoPeers);
+        if (status.historyRolledOff && !rollOffChecked && !ui.isBootMode()) {
+            rollOffChecked = true;
+            namespace text = handheld::ui::storage_history;
+            if (!text::rollOffSeen()) {
+                lvHelpOverlay.hide(); lvNoticeOverlay.show(text::RollOffTitle, text::RollOffNotice, text::markRollOffSeen);
+            }
+        }
         if (powerMgr.isScreenOn()) {
             ui.lvStatusBar().setBatteryPercent(powerMgr.batteryPercent());
             ui.lvStatusBar().setBatteryDisplay(serviceClient.config.settings().batteryDisplay);

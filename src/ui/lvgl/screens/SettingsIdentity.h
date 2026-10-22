@@ -88,4 +88,5 @@ enum class SettingId : uint8_t {
     PropagationChooseNode,
     PropagationClearNode,
     PropagationSync,
+    StorageHistory,
 };

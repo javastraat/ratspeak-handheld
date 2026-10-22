@@ -166,6 +166,7 @@ void DeviceService::poll() {
     // Deferred maintenance uses the storage worker. Immediate diagnostic builds
     // may perform maintenance only when the radio owner permits blocking I/O.
     _messages.configureVoiceRetention(_config.settings().voice.maxMessages);
+    _messages.enableSpaceReclaim();
     _messages.poll(maintenanceIo);
     // Observe UI cancellation before the pump can start another queued frame.
     pollSends();
@@ -329,6 +330,8 @@ void DeviceService::refreshStatus() {
     _status.memo = _backend.memoStatus();
     _status.flash = _flash.isReady();
     _status.sd = _sd.isReady();
+    _status.history = _messages.historyMode();
+    _status.historyRolledOff = _messages.historyRolledOff();
     if ((!_lastStorageStatus || _lastStatus - _lastStorageStatus >= 5000) &&
         _backend.pollRadioBeforeBlockingWork()) {
         storage::StorageLease lease;

@@ -81,6 +81,11 @@ public:
         uint8_t limit = ConversationPageCapacity);
     Submission requestConversation(const handheld::storage::ConversationSelector&);
     Submission requestTrim(const std::string& peer);
+    handheld::storage::HistoryMode historyMode() const;
+    // The oldest history rolled off for space during this boot.
+    bool historyRolledOff() const { return _historyRolledOff; }
+    // The running owner arms it after any setup handoff; its first poll is the boot check.
+    void enableSpaceReclaim() { _reclaimEnabled = true; }
     void configureVoiceRetention(uint8_t limit);
     void protectVoiceRecord(const RecordKey&); // Memo owner; ordered before opening any audio read.
     void poll(bool allowMaintenanceIo=false);
@@ -121,6 +126,7 @@ public:
 
 private:
     void pollVoiceRetention(bool allowIo);
+    void pollSpaceReclaim(bool allowIo);
     bool loadStartupMetadata();
     void bumpRevision();
     Submission submit(Request, const WriteQueue::PayloadPart* = nullptr, size_t count = 0, size_t capacity = 0);
@@ -142,6 +148,10 @@ private:
     uint32_t _audioRetentionRetry=0;
     uint8_t _maxVoiceMessages=2;
     bool _audioRetentionConfigured=false,_audioRetentionDirty=true,_audioExternalReady=false,_cardPending=false;
+    Ticket _reclaimTicket;
+    HistoryEntry _reclaimCursor;
+    uint8_t _createsSinceReclaim = 0;
+    bool _reclaimEnabled = false, _reclaimDue = true, _reclaimContinue = false, _historyRolledOff = false;
     Ticket _deleteFence;
     uint8_t _fencedPeer[16] = {};
     uint64_t _settledThrough = 0;
